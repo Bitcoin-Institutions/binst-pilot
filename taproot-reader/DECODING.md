@@ -1,12 +1,20 @@
 # Decoding Citrea Data-on-DA (DECODING.md)
 
-This document explains the concepts behind decoding Citrea Data Availability inscriptions written into Bitcoin taproot script-path transactions. It focuses on the five transaction types we support, what to look for on the Bitcoin chain, why we run a full node, and the practical steps we use to search and decode the protocol's entities and events.
+This document explains the technical details of decoding Citrea Data Availability
+inscriptions written into Bitcoin taproot script-path transactions. It covers the
+five transaction types, the wire format, and the practical steps for finding and
+decoding them.
+
+**Context:** This is the verification layer of the BINST protocol. For basic
+discovery of institutions, membership, and provenance, use Ordinals explorers
+and Rune indexers (see `conceptual.md`). This document covers the deeper layer:
+decoding Citrea's ZK batch proofs and state diffs from raw Bitcoin witness data,
+which requires a Bitcoin full node and our `taproot-reader` tool.
 
 ## Goals
 
 - Explain the five Citrea DA variants and their encoded payloads.
 - Describe how Citrea puts data into Bitcoin (tapscript witness format, wtxid prefix, nonce).
-- Document why a full node is required and the advantages it provides.
 - Provide a concrete, reliable procedure for finding, extracting, and decoding inscriptions.
 - Point to the code that implements parsing and scanning in this repository.
 
@@ -75,21 +83,32 @@ Why a nonce? the tapscript witness affects the transaction witness and thus the 
 
 ---
 
-## Why run a full Bitcoin node (not just an RPC proxy or a public API)
+## When and why to use a full Bitcoin node
 
-Running your own full node provides several security and reliability properties that are essential when you rely on Bitcoin as authoritative DA:
+**A full node is NOT required for basic BINST entity discovery.** Institutions,
+membership, and provenance are represented as Ordinals inscriptions and Rune
+balances, discoverable through standard explorers and wallets (see `conceptual.md`
+and `BITCOIN-IDENTITY.md`).
 
-- **Full data access.** You can fetch block headers, full blocks, and raw transactions including witness data (witness is required for tapscript extraction). Many public APIs return only non-witness data or rate-limit witness access.
+**A full node IS required for ZK verification** — independently confirming that
+Citrea's state transitions were computed correctly by decoding batch proofs from
+raw witness data. This is the trustless verification tier.
 
-- **Authenticity and consensus.** A full node verifies blocks and enforces consensus rules locally. This prevents being fed inconsistent or reorged data by a third-party API.
+When running this verification tier, a full node provides:
 
-- **Performance for scanning.** Local RPC calls over `getblockhash` / `getblock` / `getrawtransaction` are efficient and can be scripted. Public APIs often impose hard rate limits or strip witness.
+- **Full witness data access.** Batch proofs live inside taproot witness fields.
+  Many public APIs strip or truncate witness data.
 
-- **Privacy.** No query telemetry is leaked to third parties when scanning large ranges.
+- **Consensus verification.** A full node validates blocks locally, preventing
+  inconsistent or reorged data from third-party APIs.
 
-- **Replay and reorg handling.** A full node makes it straightforward to detect and handle reorgs and to verify that an inscription is included in a particular block at a particular height.
+- **Performance.** Local RPC calls are fast and unmetered. Public APIs impose
+  rate limits.
 
-Bottom line: for a protocol that treats Bitcoin as finality and availability layer, a full node is the practical minimum.
+- **Privacy.** No query telemetry is leaked to third parties.
+
+- **Reorg handling.** A full node detects reorgs and verifies inclusion at
+  specific block heights.
 
 ---
 
@@ -194,15 +213,20 @@ cargo run --bin citrea-scanner -- --from 127600 --to 127761 --format json --rpc-
 
 ## Recommended next steps / improvements
 
-- Add the following tests:
-  - Unit tests for each `DataOnDa` variant using crafted Borsh payloads.
-  - Fuzz tests for the tapscript parser to ensure robust handling of malformed pushdata.
+- Add unit tests for each `DataOnDa` variant using crafted Borsh payloads.
 
-- Add a small reassembly helper for `Aggregate` + `Chunk` flow: given an `Aggregate` record, fetch and verify all referenced chunk transactions and reassemble the proof.
+- Add fuzz tests for the tapscript parser to ensure robust handling of malformed pushdata.
 
-- Export a WASM build of `citrea-decoder` so a lightweight indexer (browser or edge) can decode inscriptions without running a full node.
+- Add a reassembly helper for `Aggregate` + `Chunk` flow: given an `Aggregate` record, fetch and verify all referenced chunk transactions and reassemble the proof.
 
-- Add provenance verification steps: verify that signatures/signers in `BatchProofMethodId` are expected and that commitments match on-chain L2 data where possible.
+- Export a WASM build of `citrea-decoder` so a lightweight indexer (browser or edge) can decode batch proofs without running a full node.
+
+- Implement a state-diff parser for `Complete` batch proofs — extracting `(contract, slot, old_value, new_value)` tuples from the raw proof bytes.
+
+- Integrate with the `binst-decoder` crate to map decoded state diffs to BINST protocol entities (institutions, templates, instances).
+
+Note: this document covers the verification tier only. For the entity identity
+and membership layers (Ordinals + Runes), see `BITCOIN-IDENTITY.md`.
 
 ---
 

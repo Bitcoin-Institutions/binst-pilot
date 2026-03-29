@@ -1,28 +1,33 @@
 //! BINST protocol entity types reconstructed from storage diffs.
 //!
 //! These types represent the protocol's domain objects as decoded from
-//! Bitcoin (via Citrea state diffs).  Every type carries an optional
-//! `bitcoin_identity` field — a forward-compatible hook for the planned
-//! Taproot-based institution identity feature.
+//! Bitcoin (via Citrea state diffs).  Every type carries a
+//! `bitcoin_identity` field linking it across all reachability layers:
+//!
+//! - **EVM address** — find it on Citrea
+//! - **Bitcoin pubkey** — verify the controller on Bitcoin
+//! - **Inscription ID** — look it up on any Ordinals explorer
+//! - **Membership Rune ID** — check membership in any Rune wallet
+//!
+//! See `BITCOIN-IDENTITY.md` for the full architecture specification.
 
 use serde::{Deserialize, Serialize};
 
-// ── Bitcoin identity (forward-compatible) ────────────────────────
+// ── Bitcoin identity ─────────────────────────────────────────────
 
-/// A Bitcoin-native identity that can be associated with any BINST entity.
+/// A Bitcoin-native identity that links a BINST entity across all
+/// reachability layers: Citrea (EVM), Ordinals (inscriptions), and
+/// Runes (membership tokens).
 ///
-/// Today this is populated from the Citrea admin address (an EVM key).
-/// In the future it will hold a Taproot x-only public key derived from
-/// the institution admin's Bitcoin key, enabling:
+/// The struct is designed so that code starts with just `evm_address`
+/// (always available from Citrea state) and progressively gains richer
+/// Bitcoin identity as inscriptions and Runes are discovered.
 ///
-/// - **Clementine bridge deposits** to an institution's own BTC address
-/// - **Bitcoin-native verification** — "this institution is controlled by
-///   the holder of this Bitcoin key"
-/// - **Covenant-guarded treasuries** (OP_CTV / OP_CAT when available)
-///
-/// The struct is designed so that code can check `bitcoin_pubkey.is_some()`
-/// to know whether full Bitcoin identity has been configured, and fall
-/// back to `evm_address` otherwise.
+/// Four layers of reachability:
+/// 1. `evm_address` — find it on Citrea
+/// 2. `bitcoin_pubkey` — verify the controller on Bitcoin
+/// 3. `inscription_id` — look it up on any Ordinals explorer
+/// 4. `membership_rune_id` — check membership in any Rune wallet
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BitcoinIdentity {
     /// The EVM address (20 bytes) of the admin / creator.
@@ -31,8 +36,18 @@ pub struct BitcoinIdentity {
 
     /// Optional x-only Taproot public key (32 bytes).
     /// When set, this is the canonical Bitcoin identity of the entity.
-    /// When `None`, the entity has not yet registered a Bitcoin key.
+    /// Controls the Ordinal inscription UTXO.
     pub bitcoin_pubkey: Option<[u8; 32]>,
+
+    /// Ordinals inscription ID (e.g., "abc123...i0").
+    /// Links to the entity's permanent identity inscription on Bitcoin.
+    /// Discoverable via any Ordinals explorer using `metaprotocol=binst`.
+    pub inscription_id: Option<String>,
+
+    /// Rune ID for the institution's membership token (e.g., "840000:20").
+    /// A balance of ≥1 unit = membership in this institution.
+    /// Discoverable via any Rune indexer or wallet.
+    pub membership_rune_id: Option<String>,
 
     /// Optional derivation path or label for the key.
     /// Useful for HD wallets: e.g. "m/86'/0'/0'/0/0".
@@ -45,11 +60,13 @@ impl BitcoinIdentity {
         Self {
             evm_address: address,
             bitcoin_pubkey: None,
+            inscription_id: None,
+            membership_rune_id: None,
             derivation_hint: None,
         }
     }
 
-    /// Create a full identity with both EVM and Bitcoin keys.
+    /// Create an identity with EVM address and Bitcoin key.
     pub fn with_bitcoin_key(
         evm_address: [u8; 20],
         pubkey: [u8; 32],
@@ -58,6 +75,25 @@ impl BitcoinIdentity {
         Self {
             evm_address,
             bitcoin_pubkey: Some(pubkey),
+            inscription_id: None,
+            membership_rune_id: None,
+            derivation_hint,
+        }
+    }
+
+    /// Create a full identity with all reachability layers.
+    pub fn full(
+        evm_address: [u8; 20],
+        pubkey: [u8; 32],
+        inscription_id: String,
+        membership_rune_id: Option<String>,
+        derivation_hint: Option<String>,
+    ) -> Self {
+        Self {
+            evm_address,
+            bitcoin_pubkey: Some(pubkey),
+            inscription_id: Some(inscription_id),
+            membership_rune_id,
             derivation_hint,
         }
     }
@@ -65,6 +101,16 @@ impl BitcoinIdentity {
     /// Whether this identity has a Bitcoin-native key.
     pub fn has_bitcoin_key(&self) -> bool {
         self.bitcoin_pubkey.is_some()
+    }
+
+    /// Whether this identity has an Ordinals inscription.
+    pub fn has_inscription(&self) -> bool {
+        self.inscription_id.is_some()
+    }
+
+    /// Whether this identity has a membership Rune.
+    pub fn has_membership_rune(&self) -> bool {
+        self.membership_rune_id.is_some()
     }
 
     /// Return the Taproot address (bech32m) if a Bitcoin key is set.

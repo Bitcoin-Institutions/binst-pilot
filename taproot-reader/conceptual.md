@@ -1,300 +1,239 @@
-# How BINST Reads Institutions from Bitcoin
+# How BINST Represents Institutions on Bitcoin
 
-A non-technical explanation of how the taproot-reader module finds and decodes
-institutional activity that was originally recorded on Citrea (a Bitcoin L2)
-by scanning the Bitcoin blockchain itself.
+A non-technical explanation of how the BINST protocol makes institutions,
+membership, and processes **fully visible and verifiable on Bitcoin** —
+without requiring custom software for basic discovery.
 
 ---
 
 ## The big picture
 
 BINST is a protocol for creating and operating transparent institutions on
-Bitcoin. When someone creates an institution, defines a process, or completes
-a step in that process, those actions happen on **Citrea** — a Layer 2 network
-that runs smart contracts. Citrea then periodically writes compressed summaries
-of all its activity into **Bitcoin transactions**, using a feature called
-**Taproot script-path spends**.
+Bitcoin. It uses three complementary Bitcoin-native mechanisms:
 
-This means that every institutional action eventually ends up **on Bitcoin
-itself**, bundled alongside thousands of other Citrea transactions into a
-compact cryptographic package. The taproot-reader module is the tool that
-finds those packages on Bitcoin and extracts the institutional data from them.
+1. **Ordinals inscriptions** — each institution, process template, and
+   process instance is a unique inscription on Bitcoin, discoverable in
+   any Ordinals explorer or wallet
+2. **Runes** — institutional membership is a fungible token on Bitcoin,
+   visible in any Rune-aware wallet
+3. **Citrea batch proofs** — every computational state transition is
+   mathematically proven correct and anchored to Bitcoin via ZK proofs
 
-Think of it this way:
+Complex institutional logic (multi-step workflows, payment processing,
+validation rules) executes on **Citrea**, a Bitcoin L2 with smart contract
+support. But identity, ownership, and membership live **directly on Bitcoin**.
 
 ```
-Institutions, processes, steps
-        ↓  (happen on Citrea)
-Citrea batches everything together
-        ↓  (writes to Bitcoin every few minutes)
-Bitcoin stores the batches permanently
-        ↓  (our scanner reads them back)
-Taproot-reader decodes the institutional data
+┌─────────────────────────────────────────────────┐
+│              BITCOIN (L1)                        │
+│                                                 │
+│  Ordinals         Runes         Batch Proofs    │
+│  (identity)       (membership)  (verification)  │
+│                                                 │
+│  "it exists"      "I'm a        "every state    │
+│                   member"       transition was   │
+│                                 correct"        │
+└─────────────────────────────────────────────────┘
+                      │
+         Citrea (L2 processing layer)
+         Smart contracts execute here
+         Complex logic, events, payments
 ```
 
 ---
 
-## What ends up on Bitcoin and in what form
+## Three ways to find BINST entities on Bitcoin
 
-Citrea writes two kinds of summaries to Bitcoin:
+### 1. Ordinal inscriptions — entity identity and provenance
 
-### 1. Sequencer Commitments — "here is what happened, in order"
+Every BINST entity is inscribed on Bitcoin as an Ordinal. The inscription
+carries the entity's metadata (name, admin key, description) and sits in a
+UTXO controlled by the admin's Bitcoin key. The Ordinals `metaprotocol` field
+is set to `"binst"`, making all BINST entities filterable by any indexer.
 
-Every few minutes, the Citrea sequencer (the node that orders transactions)
-takes a batch of recent L2 blocks, computes a fingerprint (a Merkle root of
-all block hashes in the batch), and writes that fingerprint into a Bitcoin
-transaction.
+Entities form a parent/child hierarchy — an institution is a child of the
+BINST root inscription, a process template is a child of its institution,
+and so on. This provenance is trustlessly verifiable by anyone running `ord`.
 
-This is like a notary stamping a document: it proves that a specific sequence
-of events happened in a specific order. But it does not reveal the contents —
-just the fingerprint.
+```
+BINST Root Inscription (parent)
+ ├── Institution "Acme Financial" (child)
+ │    ├── Process Template "KYC Onboarding" (grandchild)
+ │    │    ├── Instance #1 (great-grandchild)
+ │    │    │    ├── Step 1 executed by Alice (event)
+ │    │    │    └── Step 2 executed by Bob (event)
+ │    │    └── Instance #2
+ │    └── Process Template "Loan Approval"
+ └── Institution "Bitcoin Credit Union" (child)
+```
 
-**What it contains:**
-- A fingerprint (Merkle root) of the L2 blocks in this batch
-- A sequence number (e.g., commitment #16,649)
-- The last L2 block number covered (e.g., block 23,924,028)
+**How to find them:**
+- Any Ordinals explorer (ordinals.com, ord.io, Hiro) — search by metaprotocol
+- Any Ordinals wallet (Xverse, Unisat) — the institution shows up as an asset
+- Self-hosted `ord` indexer — trustless, full access to all inscriptions
+- **No custom BINST software needed for basic discovery**
 
-### 2. Batch Proofs — "here is mathematical proof that everything was correct"
+**Ownership:** whoever controls the UTXO holding the inscription controls the
+institution. Transfer the UTXO = transfer admin rights. This is pure
+Bitcoin-native ownership.
 
-Periodically, a separate component (the prover) generates a **zero-knowledge
-proof** — a mathematical guarantee that every transaction in a range of L2
-blocks was executed correctly according to the rules. This proof, along with a
-summary of what changed (the "state diff"), is written to Bitcoin.
+**Updates:** reinscription appends to the inscription's history (the first
+inscription is canonical, reinscriptions form an append-only changelog).
+This matches BINST's transparency requirement — institutions cannot erase
+their history.
 
-This is the strongest guarantee. Once a batch proof is on Bitcoin, anyone with
-a Bitcoin node can independently verify that the institutional actions were
-valid — without trusting Citrea at all.
+### 2. Runes — membership tokens
 
-**What it contains:**
-- A compact mathematical proof (ZK proof, ~12 KB)
-- A state diff: every storage value that changed during this batch
-- The range of L2 blocks and sequencer commitments covered
+Each institution etches a Rune (e.g., `ACME•MEMBER`) that represents
+membership. Holding ≥1 unit means "you are a member."
 
-### What about the actual institution data?
+**How to check membership:**
+- Any Rune-aware wallet (Xverse, Unisat) — "I hold ACME•MEMBER"
+- Any Rune indexer — query balance of a specific address
+- Self-hosted `ord` — trustless Rune balance verification
+- **No custom BINST software needed**
 
-The institution names, member lists, process steps, and execution history are
-not written to Bitcoin as readable text. They are encoded inside the **state
-diff** of batch proofs — as raw key-value pairs representing EVM storage slot
-changes.
+**Adding a member:** admin sends 1 unit of the institution's Rune to the
+new member's Bitcoin address. **Removing:** admin burns the token or member
+sends it back. This mirrors the Solidity `addMember`/`removeMember` pattern
+but lives entirely on Bitcoin L1.
 
-To go from "storage slot `0xa4f2...` changed to `0x0001`" to "Alice completed
-step 2 of the KYC process at Acme Financial" requires knowing the contract's
-storage layout — which our decoder understands because we wrote the contracts.
+### 3. Citrea batch proofs — computational verification
+
+Complex institutional logic (step execution, payment processing, multi-step
+workflows) runs on Citrea's smart contracts. Citrea periodically writes
+**ZK batch proofs** to Bitcoin — mathematical guarantees that every state
+transition was computed correctly.
+
+This is the **strongest verification layer**: anyone with a Bitcoin full node
+and our `taproot-reader` tool can independently verify that every
+institutional action was valid, without trusting Citrea at all.
+
+**How batch proofs reach Bitcoin:** Citrea writes two kinds of data into
+Bitcoin transactions via Taproot script-path spends:
+
+- **Sequencer commitments** — fingerprints (Merkle roots) of batches of L2
+  blocks, proving ordering
+- **Batch proofs** — ZK proofs plus state diffs (every storage value that
+  changed), proving correctness
+
+The `taproot-reader` tool decodes these and maps storage slot changes back
+to BINST entity fields (institution name, members, step states, etc.).
 
 ---
 
-## How accurate is the search
+## Discovering BINST entities: who needs what
 
-### Can we avoid parsing every transaction in a block?
+| What you want to know | Where to look | Software needed |
+|---|---|---|
+| Does institution X exist? | Ordinals explorer | Browser |
+| Who is the admin? | Check UTXO owner of the inscription | Ordinals wallet or explorer |
+| Am I a member? | Check Rune balance | Any Rune-aware wallet |
+| Who are the members? | Query Rune balances | Rune indexer |
+| What processes does it have? | Child inscriptions of the institution | Ordinals explorer |
+| What step is instance Y on? | Citrea RPC or batch proof decode | Citrea RPC or taproot-reader |
+| Was step execution valid? | ZK batch proof verification | Full node + taproot-reader |
 
-**Almost.** Citrea transactions are identified by a 2-byte prefix on their
-**witness transaction ID** (wtxid). Every Citrea transaction is crafted so its
-wtxid starts with `0x02 0x02`. This means:
-
-- For each block, we compute the wtxid of every transaction
-- If the wtxid does **not** start with `0x0202`, we skip it immediately
-- Only matching transactions (roughly **1 in 65,536** by random chance) get
-  fully parsed
-
-In practice, most Bitcoin testnet4 blocks contain 1–5 transactions total.
-A block with 200 transactions might have 2–3 Citrea inscriptions. The prefix
-filter eliminates 99.99% of transactions with a single 2-byte comparison —
-no script parsing, no deserialization, just a prefix check.
-
-**False positives** (non-Citrea transactions that happen to start with
-`0x0202`) are caught in the next step when we try to parse the tapscript
-structure. A false positive would fail to match the expected opcode sequence
-(`PUSH32 <pubkey> OP_CHECKSIGVERIFY PUSH2 <kind> ...`) and be discarded.
-
-So the effective false-positive rate is essentially zero.
-
-### Can we make it even faster?
-
-**Yes, but not at the Bitcoin protocol level.** Bitcoin does not index
-transactions by witness content — there is no way to ask a Bitcoin node
-"give me all transactions whose wtxid starts with 0x0202." We must scan
-every transaction in every block.
-
-However, there are two acceleration strategies:
-
-**Strategy 1: Track known block ranges.** Citrea's RPC tells us exactly
-which Bitcoin block heights contain sequencer commitments and batch proofs:
-
-```
-citrea_getLastCommittedL2Height  →  we know roughly which BTC blocks to scan
-ledger_getSequencerCommitmentsOnSlotByNumber(btcHeight)  →  jump directly to a block
-```
-
-Instead of scanning every block, we can ask Citrea "which Bitcoin blocks
-have your data?" and only scan those. This reduces the search space from
-thousands of blocks to dozens.
-
-**Strategy 2: Maintain a local index.** Once we scan a block, we store the
-results (block height → list of decoded inscriptions). Future queries are
-instant lookups instead of re-scans.
+The key insight: **basic discovery requires no custom software**. Standard
+Ordinals and Rune tooling covers identity, ownership, and membership.
+The full node + taproot-reader is only needed for the strongest verification
+level — confirming that computations were correct via ZK proofs.
 
 ---
 
-## Should we add wallet-based ownership for quicker searches?
+## How the protocol maps to Bitcoin
 
-This is an interesting architectural question. Today, all Citrea inscriptions
-come from **two addresses**: the sequencer's address (for commitments) and
-the prover's address (for batch proofs). If BINST institutions had their
-own Bitcoin addresses, could we filter faster?
+| Protocol entity | Bitcoin representation | How to find it |
+|---|---|---|
+| **Institution** | Ordinal inscription (metaprotocol: `binst`) | Ordinals explorer, wallet, `ord` |
+| **Institution admin** | UTXO holder of the inscription | Check inscription ownership |
+| **Membership** | Rune balance (`INSTITUTION•MEMBER`) | Rune wallet, indexer |
+| **Process template** | Child inscription of institution | Ordinals explorer (provenance chain) |
+| **Process instance** | Child inscription of template | Ordinals explorer (provenance chain) |
+| **Step execution** | Child inscription of instance (optional) | Ordinals explorer |
+| **Computational state** | Storage slots in Citrea batch proof state diffs | taproot-reader + full node |
+| **State correctness** | ZK proof anchored to Bitcoin | taproot-reader + full node |
 
-### The short answer: no, and here's why
+---
 
-The data that reaches Bitcoin is not written by individual institutions.
-It is written by Citrea's infrastructure — the sequencer and the prover —
-on behalf of **all** Citrea activity. A single sequencer commitment covers
-thousands of L2 transactions from hundreds of different users and contracts.
-There is no way to make one institution's data appear at a specific Bitcoin
-address because the batching happens at the Citrea level, not the
-institution level.
+## The `BitcoinIdentity` type
 
-The filtering we need happens **after** we decode the Citrea data:
-
-```
-Bitcoin block
-  → filter by wtxid prefix (find Citrea txs)
-    → decode batch proof (extract state diff)
-      → filter by contract address (find BINST data)
-        → filter by storage slot (find specific institution)
-```
-
-### What wallet-based ownership IS useful for — and how we prepare for it
-
-While it does not help with Bitcoin-level scanning, giving each institution
-a Bitcoin identity (a Taproot address derived from the admin's key) would be
-valuable for:
-
-- **Clementine bridge deposits** — an institution could receive BTC directly
-  to its own address, which gets bridged to cBTC on Citrea
-- **Verification** — "this institution is controlled by the holder of this
-  Bitcoin key" is a Bitcoin-native identity proof
-- **Future covenants** — if Bitcoin adds OP_CTV or OP_CAT, institution
-  treasuries could enforce spending rules at the Bitcoin script level
-
-To prepare for this, the `binst-decoder` crate defines a **`BitcoinIdentity`**
-type that every entity carries:
+Every BINST entity in the decoder carries a `BitcoinIdentity` — a struct
+that links the entity across all four reachability layers:
 
 ```
 BitcoinIdentity {
-    evm_address:      [u8; 20]       ← always available (from Citrea state)
-    bitcoin_pubkey:   Option<[u8;32]> ← Taproot x-only key (when registered)
-    derivation_hint:  Option<String>  ← HD wallet path (e.g. m/86'/0'/0'/0/0)
+    evm_address:         [u8; 20]        ← Citrea contract address (always available)
+    bitcoin_pubkey:      Option<[u8;32]> ← Taproot x-only key (controls the inscription)
+    inscription_id:      Option<String>  ← Ordinals ID (e.g., "abc123...i0")
+    membership_rune_id:  Option<String>  ← Rune ID (e.g., "840000:20")
+    derivation_hint:     Option<String>  ← HD wallet path (e.g. m/86'/0'/0'/0/0)
 }
 ```
 
-Today `bitcoin_pubkey` is `None` — we only have EVM addresses from the
-contract storage. When Bitcoin-native identity is added to the protocol
-(a contract method like `registerBitcoinKey(bytes32 xOnlyPubKey)`), the
-storage decoder will pick up that new slot and populate the field. Every
-downstream consumer (webapp, API, verification tool) that checks
-`identity.has_bitcoin_key()` will light up automatically.
-
-This is a protocol design decision, not a search optimization — but
-the data structures are ready for it today.
+This gives every entity four ways to be reached:
+1. `evm_address` — find it on Citrea
+2. `bitcoin_pubkey` — verify the controller's Bitcoin key
+3. `inscription_id` — look it up on any Ordinals explorer
+4. `membership_rune_id` — check membership in any Rune wallet
 
 ---
 
-## How the scanner maps Bitcoin data to protocol entities
+## When is a full Bitcoin node needed?
 
-### The mapping
+A full node is **not required** for basic discovery of BINST entities.
+Standard Ordinals and Rune tooling handles identity, ownership, and
+membership.
 
-| Protocol entity | Where it lives on Citrea | How it appears on Bitcoin |
-|---|---|---|
-| **Institution** | `Institution.sol` contract at a specific address | Storage slots in batch proof state diffs |
-| **Institution name** | `name` storage variable (slot 0) | Key-value pair in state diff |
-| **Institution members** | `members` array + `isMember` mapping | Multiple storage slots in state diff |
-| **Process template** | `ProcessTemplate.sol` at its own address | Storage slots: step names, descriptions, action types |
-| **Process instance** | `ProcessInstance.sol` at its own address | Storage slots: current step, completion status, timestamps |
-| **Step execution** | `StepExecuted` event emitted on Citrea | Event logs in the L2 block (referenced by sequencer commitment) |
-| **Step completion** | Storage update: `currentStep` incremented | Key-value change in batch proof state diff |
+A full node **is required** for:
 
-### What we can read today
+1. **ZK proof verification** — independently confirming that Citrea's
+   state transitions were computed correctly by decoding batch proofs
+   from raw witness data
+2. **Trustless mode** — not relying on any third-party explorer or indexer
+3. **Scanning Citrea DA transactions** — the `taproot-reader` tool
+   connects to a local Bitcoin Core node to scan for Citrea's Taproot
+   script-path spends
 
-**Layer 1 — Bitcoin scanning** (`citrea-decoder` crate):
-- Find all Citrea inscriptions on any Bitcoin block range
-- Decode sequencer commitments: which L2 block ranges are committed to Bitcoin
-- Decode batch proofs: extract the raw state diff bytes
-- Cross-reference with Citrea RPCs to link L2 blocks to specific transactions
-
-**Layer 2 — Storage layout decoding** (`binst-decoder` crate, new):
-- Deterministic slot formulas for all four BINST contracts
-- Given a `(contract_address, slot, value)` tuple, identify which protocol
-  field it corresponds to (institution name, admin, member list, step index, etc.)
-- Reconstruct `InstitutionState`, `ProcessTemplateState`, `ProcessInstanceState`
-  objects with typed fields — including the forward-compatible `BitcoinIdentity`
-- All Keccak-256 slot computations are verified against known Solidity test vectors
-
-### What still needs to happen
-
-The two layers are built. The remaining gap is the **state diff parser** —
-the component that takes the raw bytes from inside a `Complete` batch proof
-and splits them into individual `(contract, slot, old_value, new_value)` tuples.
-
-This depends on Citrea's exact state-diff serialisation format (which may evolve
-between testnet versions). Once implemented, the full pipeline will be:
+Think of it as two tiers:
 
 ```
-Bitcoin block
-  → citrea-decoder: find inscription, decode Borsh → raw proof bytes
-    → state-diff parser: split into (contract, slot, value) tuples
-      → binst-decoder: match slot formulas → InstitutionState, ProcessState, etc.
-        → BitcoinIdentity on each entity (evm_address now, bitcoin_pubkey later)
+Tier 1 (standard tooling):  Ordinals explorer + Rune wallet
+  → identity, ownership, membership — no full node needed
+
+Tier 2 (verification):  Bitcoin full node + taproot-reader
+  → ZK proof verification, state diff decoding — trustless
 ```
-
----
-
-## Why we need a full Bitcoin node
-
-A Bitcoin full node gives us three things that no block explorer or API can:
-
-1. **Complete witness data.** The Citrea inscriptions live inside taproot
-   witness fields. Most block explorers strip or truncate witness data.
-   A full node gives us every byte.
-
-2. **Trustless verification.** We do not rely on any third-party API to
-   tell us what is on Bitcoin. Our node validates every block independently.
-   If the data is there, we see it. If it is not, no one can fake it.
-
-3. **No rate limits, no downtime.** Scanning thousands of blocks for Citrea
-   transactions requires many RPC calls. A local node handles this instantly.
-   A public API would throttle us or go offline.
 
 For the BINST pilot, the full node runs on the developer's home server
-connected to Bitcoin Testnet4 — the same test network that Citrea uses as
-its data availability layer.
+connected to Bitcoin Testnet4.
 
 ---
 
 ## Summary
 
-The taproot-reader does not "search for institutions on Bitcoin" the way you
-search for a name in a database. Instead, it follows a layered pipeline:
+BINST entities are fully represented on Bitcoin through three mechanisms:
 
-1. **Scans** Bitcoin blocks for transactions with a specific 2-byte wtxid prefix
-2. **Parses** the taproot witness script to extract the Citrea-encoded payload
-3. **Deserializes** the payload to identify sequencer commitments and batch proofs
-4. **Extracts** the state diff from batch proofs — a compact summary of every
-   storage change on Citrea during that proving period
-5. **Maps** specific storage slots to BINST contract variables — translating raw
-   bytes back into institution names, member lists, process states, and step
-   completion records
-6. **Attaches** a `BitcoinIdentity` to each entity — today populated with the
-   EVM address, tomorrow with a Taproot x-only public key when the protocol
-   adds Bitcoin-native identity registration
+1. **Ordinals** — each entity is an inscription, owned by a Bitcoin key,
+   discoverable in any Ordinals explorer or wallet
+2. **Runes** — membership is a token balance, visible in any Rune-aware wallet
+3. **Batch proofs** — every computation is ZK-proven and anchored to Bitcoin
 
-The result: institutional transparency that is anchored to Bitcoin's security,
-verified by zero-knowledge proofs, and readable by anyone running a Bitcoin node.
+A Bitcoin maximalist can:
+- See the institution in their Ordinals explorer ✓
+- See their membership in their Rune wallet ✓
+- Verify the institution's entire computational history with a full node ✓
+- Never touch Citrea directly if they don't want to ✓
 
 ### Crate architecture
 
 ```
 taproot-reader/
   crates/
-    citrea-decoder/    ← Layer 1: Bitcoin → Citrea inscriptions (no_std, WASM-ready)
-    binst-decoder/     ← Layer 2: storage slots → protocol entities (BitcoinIdentity-aware)
+    citrea-decoder/    ← Citrea DA inscription parser (no_std, WASM-ready)
+    binst-decoder/     ← Storage slots → protocol entities (BitcoinIdentity-aware)
     cli/               ← citrea-scanner binary (connects to Bitcoin Core RPC)
 ```
+
+See `BITCOIN-IDENTITY.md` for the full architecture specification.
+See `DECODING.md` for Citrea DA transaction format details.
