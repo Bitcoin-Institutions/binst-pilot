@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 citrea-decoder = { path = "../citrea-decoder" }
+binst-decoder = { path = "../binst-decoder" }
 bitcoin = "0.32"
 bitcoincore-rpc = "0.19"
 clap = { version = "4", features = ["derive"] }
