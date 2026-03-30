@@ -12,9 +12,17 @@ import "./process/ProcessTemplate.sol";
  *      separate contract with its own address, making it independently
  *      verifiable on block explorers and linkable from a webapp.
  *
- *      Bitcoin-native identity:
- *        - inscriptionId links to the Ordinals inscription on Bitcoin L1
+ *      Authority model — Bitcoin key is sovereign:
+ *        This L2 contract is a PROCESSING DELEGATE, not the root of
+ *        authority. The true owner is the holder of the Bitcoin private
+ *        key that controls the inscription UTXO on Bitcoin L1.
+ *
+ *        - inscriptionId links to the Ordinals inscription (identity root)
  *        - runeId links to the institution's membership Rune
+ *        - admin (EVM address) executes logic on behalf of the BTC key holder
+ *
+ *        If the user switches L2s, they deploy a new contract bound to the
+ *        same inscriptionId. The Bitcoin-layer identity is unchanged.
  *        See BITCOIN-IDENTITY.md for the full architecture.
  *
  *      Minimal scope for the pilot:
@@ -29,6 +37,8 @@ contract Institution {
     address public deployer; // BINSTDeployer that created this
 
     /// @notice Ordinals inscription ID on Bitcoin (e.g., "<txid>i0").
+    ///         This is the IDENTITY ROOT — the inscription UTXO owner is
+    ///         the canonical authority. This contract is a delegate.
     ///         Set after inscribing the institution on Bitcoin L1.
     string public inscriptionId;
 

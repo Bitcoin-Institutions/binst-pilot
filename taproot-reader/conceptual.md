@@ -9,33 +9,36 @@ without requiring custom software for basic discovery.
 ## The big picture
 
 BINST is a protocol for creating and operating transparent institutions on
-Bitcoin. It uses three complementary Bitcoin-native mechanisms:
+Bitcoin. **The Bitcoin key is the root of authority.** The user who holds the
+private key controls everything — the institution's identity, its membership,
+and any L2 contracts that execute logic on its behalf.
+
+It uses three complementary Bitcoin-native mechanisms:
 
 1. **Ordinals inscriptions** — each institution, process template, and
    process instance is a unique inscription on Bitcoin, discoverable in
-   any Ordinals explorer or wallet
+   any Ordinals explorer or wallet. **The inscription UTXO owner is the
+   canonical admin.**
 2. **Runes** — institutional membership is a fungible token on Bitcoin,
    visible in any Rune-aware wallet
-3. **Citrea batch proofs** — every computational state transition is
-   mathematically proven correct and anchored to Bitcoin via ZK proofs
-
-Complex institutional logic (multi-step workflows, payment processing,
-validation rules) executes on **Citrea**, a Bitcoin L2 with smart contract
-support. But identity, ownership, and membership live **directly on Bitcoin**.
+3. **L2 smart contracts** — complex institutional logic (multi-step workflows,
+   payment processing, validation rules) executes on an L2 as a **delegate**
+   of the Bitcoin key holder. Currently Citrea, but portable to any L2.
 
 ```
 ┌─────────────────────────────────────────────────┐
-│              BITCOIN (L1)                        │
+│        BITCOIN (L1) — ROOT OF AUTHORITY          │
 │                                                 │
 │  Ordinals         Runes         Batch Proofs    │
 │  (identity)       (membership)  (verification)  │
-│                                                 │
-│  "it exists"      "I'm a        "every state    │
-│                   member"       transition was   │
+│  ★AUTHORITATIVE★                                │
+│  "it exists and   "I'm a        "every state    │
+│   I own it"       member"       transition was   │
 │                                 correct"        │
 └─────────────────────────────────────────────────┘
                       │
-         Citrea (L2 processing layer)
+         L2 processing layer (DELEGATE)
+         Currently Citrea — portable to any L2
          Smart contracts execute here
          Complex logic, events, payments
 ```
@@ -75,7 +78,9 @@ BINST Root Inscription (parent)
 
 **Ownership:** whoever controls the UTXO holding the inscription controls the
 institution. Transfer the UTXO = transfer admin rights. This is pure
-Bitcoin-native ownership.
+Bitcoin-native ownership and the **root of authority** for the entire protocol.
+L2 contracts are delegates that execute logic on behalf of this key holder.
+If the user switches L2s, the identity stays on Bitcoin.
 
 **Updates:** reinscription appends to the inscription's history (the first
 inscription is canonical, reinscriptions form an append-only changelog).
@@ -98,18 +103,23 @@ new member's Bitcoin address. **Removing:** admin burns the token or member
 sends it back. This mirrors the Solidity `addMember`/`removeMember` pattern
 but lives entirely on Bitcoin L1.
 
-### 3. Citrea batch proofs — computational verification
+### 3. L2 batch proofs — computational verification
 
 Complex institutional logic (step execution, payment processing, multi-step
-workflows) runs on Citrea's smart contracts. Citrea periodically writes
-**ZK batch proofs** to Bitcoin — mathematical guarantees that every state
-transition was computed correctly.
+workflows) runs on L2 smart contracts **as a delegate of the Bitcoin key
+holder**. The current L2 (Citrea) periodically writes **ZK batch proofs** to
+Bitcoin — mathematical guarantees that every state transition was computed
+correctly.
 
 This is the **strongest verification layer**: anyone with a Bitcoin full node
 and our `taproot-reader` tool can independently verify that every
-institutional action was valid, without trusting Citrea at all.
+institutional action was valid, without trusting the L2 at all.
 
-**How batch proofs reach Bitcoin:** Citrea writes two kinds of data into
+The protocol is **L2-portable**: because the identity lives on Bitcoin (not
+on any particular L2), the user can redeploy to a different L2 at any time.
+The inscription, the Rune, and the provenance chain stay on Bitcoin unchanged.
+
+**How batch proofs reach Bitcoin:** The L2 writes two kinds of data into
 Bitcoin transactions via Taproot script-path spends:
 
 - **Sequencer commitments** — fingerprints (Merkle roots) of batches of L2
@@ -215,7 +225,8 @@ connected to Bitcoin Testnet4.
 BINST entities are fully represented on Bitcoin through three mechanisms:
 
 1. **Ordinals** — each entity is an inscription, owned by a Bitcoin key,
-   discoverable in any Ordinals explorer or wallet
+   discoverable in any Ordinals explorer or wallet. **The Bitcoin key is
+   the root of authority.**
 2. **Runes** — membership is a token balance, visible in any Rune-aware wallet
 3. **Batch proofs** — every computation is ZK-proven and anchored to Bitcoin
 
@@ -223,7 +234,11 @@ A Bitcoin maximalist can:
 - See the institution in their Ordinals explorer ✓
 - See their membership in their Rune wallet ✓
 - Verify the institution's entire computational history with a full node ✓
-- Never touch Citrea directly if they don't want to ✓
+- Never touch any specific L2 directly if they don't want to ✓
+- Move their institution to a different L2 without losing identity ✓
+
+The L2 is a processing delegate, not the owner. The user's Bitcoin key
+controls everything.
 
 ### Crate architecture
 

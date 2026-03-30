@@ -7,22 +7,45 @@ How BINST entities are represented, discovered, and verified on Bitcoin.
 ## Overview
 
 BINST uses three Bitcoin-native primitives to make institutional entities
-fully stored and reachable on Bitcoin, with Citrea as the processing layer:
+fully stored and reachable on Bitcoin. **The Bitcoin key is the root of
+authority.** L2 smart contracts (on Citrea or any future L2) are processing
+delegates — they execute complex logic on behalf of the key holder, but
+they do not own the identity.
 
 | Primitive | Role | What it represents |
 |---|---|---|
 | **Ordinals inscriptions** | Entity identity, ownership, metadata | Institutions, process templates, process instances |
 | **Runes** | Membership and fungible roles | "Alice is a member of Acme Financial" |
-| **Citrea ZK batch proofs** | Computational verification | Step execution, payments, state transitions — proven correct |
+| **L2 smart contracts** | Computational processing (currently Citrea) | Step execution, payments, state transitions |
+
+### Authority model: Bitcoin key is sovereign
+
+```
+Bitcoin secret key (ROOT OF AUTHORITY)
+  │
+  ├── controls inscription UTXO     → identity, provenance, metadata
+  ├── controls Rune distribution    → membership tokens
+  └── authorizes L2 contract(s)     → processing delegates
+       ├── Citrea     (current)
+       ├── Stacks     (possible future)
+       ├── BOB        (possible future)
+       └── any L2     (portable)
+```
+
+The user who holds the Bitcoin private key has **full control** of every
+element in the protocol. If they decide to use a different L2, they can
+deploy a new contract, point it at the same inscription ID, and pick up
+where they left off. The inscription is the identity; the L2 is the
+execution engine.
 
 ```
 Bitcoin L1
-├── Ordinals    → entities EXIST here (identity, ownership, metadata)
+├── Ordinals    → entities EXIST here (identity, ownership — AUTHORITATIVE)
 ├── Runes       → membership IS here (fungible tokens per institution)
-└── ZK proofs   → computation is PROVEN here (Citrea batch proofs)
+└── ZK proofs   → computation is PROVEN here (L2 batch proofs)
 
-Citrea L2
-└── Solidity    → complex logic EXECUTES here, then gets proven to Bitcoin
+Any L2 (currently Citrea)
+└── Solidity    → complex logic EXECUTES here as a delegate of the BTC key holder
 ```
 
 ---
@@ -87,9 +110,15 @@ OP_ENDIF
 
 ### Ownership
 
-The inscription UTXO is controlled by the admin's Bitcoin key. Transfer
-the UTXO = transfer admin rights. A Bitcoin maximalist holds their
-institution in their Bitcoin wallet.
+The inscription UTXO is controlled by the admin's Bitcoin key. **This key
+is the canonical authority** — whoever controls this UTXO controls the
+institution, its child entities, and any L2 contracts bound to it.
+
+- Transfer the UTXO = transfer admin rights (on Bitcoin and all L2s)
+- L2 contracts derive their authority from this key, not the other way around
+- A Bitcoin maximalist holds their institution in their Bitcoin wallet
+- Switching L2s means deploying a new contract that references the same
+  inscription ID — the identity stays on Bitcoin
 
 ### Updates via reinscription
 
@@ -115,10 +144,11 @@ The inscription data remains permanently on Bitcoin — it is never
 destroyed — but the UTXO tracking it moves to an unknown party or
 gets consumed as miner fees.
 
-This is a known risk across the entire Ordinals ecosystem, but it is
-**more consequential for BINST** than for image NFTs because losing an
-institution's identity inscription means losing the UTXO-based ownership
-signal.
+**Under the Bitcoin-key-sovereign model, this is the most critical risk
+in the protocol.** The inscription UTXO is not a supplementary signal —
+it is the root of authority. Losing it means losing control of the
+institution at the Bitcoin layer. This is why the Taproot vault script
+guard is not optional — it is essential infrastructure.
 
 #### Script-level guard (Taproot vault)
 
@@ -300,27 +330,58 @@ This gives two independent layers of protection:
 |---|---|---|
 | Wallet discipline | Use only Ordinals-aware wallets (Xverse, Unisat, `ord wallet`) | Inscription UTXOs are frozen and cannot be accidentally spent |
 | Key isolation | Dedicated key/address for inscription UTXOs only | No mixing with spending funds eliminates accidental inclusion |
-| Protocol design | Inscription = identity record, **not** sole ownership proof | Citrea contract (`admin` address) is the authoritative owner |
-| Recovery path | Re-inscribe as child of original + update Citrea contract | Admin can recover from UTXO loss without losing history |
+| Protocol design | Inscription UTXO = canonical ownership; L2 contract = delegate | Losing the L2 is recoverable; losing the key is the critical risk |
+| Recovery path | Re-inscribe as child of original + deploy new L2 contract | Admin can recover from UTXO loss, but it is the hardest recovery |
 
 #### Graceful degradation
 
-**The critical design principle:** the Citrea smart contract is always
-the authoritative source of truth for who controls an institution. The
-inscription UTXO is a *strong supplementary signal* — it lets anyone
-on Bitcoin verify ownership without Citrea — but it is not a single
-point of failure. If the inscription UTXO is somehow lost despite the
-script guard:
+**The critical design principle:** the Bitcoin key is the root of authority.
+The inscription UTXO is the canonical proof of ownership. L2 contracts are
+processing delegates that execute logic on behalf of the key holder.
+
+The degradation hierarchy is:
+
+**Losing the L2 contract (graceful):** If Citrea goes down, or the user
+wants to switch to a different L2:
+
+1. The inscription **data** is permanent and readable on Bitcoin forever
+2. Membership Runes **continue to function** on Bitcoin L1
+3. The admin **deploys a new contract** on another L2 (Stacks, BOB, etc.)
+4. The new contract references the **same inscription ID** and rune ID
+5. The institution continues with full identity and membership intact
+
+This is the graceful case — the institution survives because the identity
+lives on Bitcoin, not on any particular L2.
+
+**Losing the inscription UTXO (serious):** If the admin accidentally spends
+the inscription UTXO despite the vault protection:
 
 1. The inscription **data** is permanent and readable forever
-2. The Citrea contract **continues to function** normally
+2. L2 contracts **continue to function** in the short term
 3. The admin **re-inscribes** a recovery record (child of the original)
-4. The Citrea contract is **updated** to reference the new inscription
+4. L2 contracts are **updated** to reference the new inscription
 5. The original inscription's provenance chain is **preserved**
 
-This means BINST degrades gracefully: losing the UTXO costs you the
-Bitcoin-native ownership proof, but the institution keeps running on
-Citrea while you recover.
+This is the serious case — the institution can recover, but it requires
+a re-inscription and L2 contract update. The vault script guard exists
+specifically to make this scenario extremely unlikely.
+
+**Losing the Bitcoin private key (catastrophic):** If the admin loses
+their Bitcoin private key:
+
+1. The committee (Leaf 1, 2-of-3 multisig) can **recover the inscription**
+   to a new key's vault address
+2. The admin **deploys new L2 contracts** from the new key
+3. This is the catastrophic case — recovery requires the committee and
+   is the reason the multi-sig backstop exists
+
+**The hierarchy:**
+
+```
+L2 contract lost     → redeploy elsewhere, identity survives on Bitcoin
+Inscription UTXO lost → re-inscribe + update L2 (harder, but recoverable)
+Bitcoin key lost      → committee recovery (hardest, requires multi-sig)
+```
 
 ### Discovery
 
@@ -362,19 +423,29 @@ weighted voting power. Governance becomes a token distribution problem.
 
 ---
 
-## Citrea — processing layer and ZK verification
+## L2 processing layer (currently Citrea)
 
-Complex institutional logic executes on Citrea's smart contracts:
+Complex institutional logic executes on L2 smart contracts **as a delegate
+of the Bitcoin key holder**:
 - Multi-step workflow execution with validation rules
 - Payment processing
 - Cross-contract calls and event emission
 - State management (current step, completion, timestamps)
 
-Citrea periodically writes **ZK batch proofs** to Bitcoin — mathematical
-guarantees that every state transition was computed correctly. This is the
-strongest verification layer: anyone with a Bitcoin full node and the
-`taproot-reader` tool can independently verify correctness without
-trusting Citrea.
+The L2 is a processing engine — it does not own the identity. The user
+can redeploy to a different L2 at any time, pointing the new contracts
+at the same inscription ID. The identity stays on Bitcoin.
+
+**L2 portability:** because the root of authority is the Bitcoin key (not
+the L2 contract address), the protocol is not locked into any specific L2.
+A user who starts on Citrea can later move to Stacks, BOB, or any future
+Bitcoin L2 without losing their institution's identity, provenance, or
+membership.
+
+The current L2 (Citrea) periodically writes **ZK batch proofs** to Bitcoin —
+mathematical guarantees that every state transition was computed correctly.
+Other L2s may use different proof mechanisms (optimistic, validity, etc.)
+but the Bitcoin-layer identity is unchanged regardless.
 
 See `DECODING.md` for the technical format of batch proofs and
 sequencer commitments.
@@ -385,47 +456,54 @@ sequencer commitments.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    BITCOIN (L1)                              │
+│               BITCOIN (L1) — ROOT OF AUTHORITY               │
 │                                                             │
 │  ┌───────────────────────┐    ┌──────────────────────────┐  │
 │  │   ORDINAL INSCRIPTIONS │    │        RUNES             │  │
 │  │   (Identity Layer)     │    │   (Membership Layer)     │  │
-│  │                        │    │                          │  │
-│  │  Root: "binst" proto   │    │  ACME•MEMBER (fungible)  │  │
-│  │   └─ Institution       │    │  BCU•MEMBER              │  │
-│  │       └─ Template      │    │  ACME•VOTE (governance)  │  │
+│  │   ★ AUTHORITATIVE ★   │    │                          │  │
+│  │                        │    │  ACME•MEMBER (fungible)  │  │
+│  │  Root: "binst" proto   │    │  BCU•MEMBER              │  │
+│  │   └─ Institution       │    │  ACME•VOTE (governance)  │  │
+│  │       └─ Template      │    │                          │  │
 │  │           └─ Instance  │    │                          │  │
 │  │               └─ Event │    │                          │  │
-│  │                        │    │                          │  │
-│  │  Ownership = UTXO      │    │  Membership = balance    │  │
-│  │  Discoverable in       │    │  Discoverable in         │  │
-│  │  any Ordinals explorer │    │  any Rune indexer        │  │
+│  │                        │    │  Membership = balance    │  │
+│  │  Ownership = UTXO      │    │  Discoverable in         │  │
+│  │  controlled by BTC key │    │  any Rune indexer        │  │
+│  │  ← THIS is the admin   │    │                          │  │
 │  └───────────────────────┘    └──────────────────────────┘  │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │              CITREA BATCH PROOFS                      │   │
+│  │              L2 BATCH PROOFS                          │   │
 │  │   (ZK-proven state diffs — computational integrity)   │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                             │
-                            │ writes to Bitcoin
+                            │ L2 writes proofs to Bitcoin
                             │
 ┌─────────────────────────────────────────────────────────────┐
-│                    CITREA (L2)                               │
-│                 Processing Layer                             │
+│              L2 PROCESSING LAYER (delegate)                  │
+│           Currently: Citrea  |  Portable to any L2           │
 │                                                             │
 │  Institution.sol    ProcessTemplate.sol    ProcessInstance.sol│
 │  BINSTDeployer.sol                                          │
 │                                                             │
-│  Turing-complete logic:                                     │
+│  Executes logic ON BEHALF OF the Bitcoin key holder:        │
 │  - Step execution with validation                           │
 │  - Payment processing                                       │
 │  - Complex multi-step workflows                             │
 │  - Event emission and indexing                              │
 │  - Cross-contract calls                                     │
 │                                                             │
-│  Reads Rune balances via Clementine bridge ←── membership   │
-│  Reads inscription IDs via oracle/bridge   ←── identity     │
+│  L2 contract is BOUND TO inscription ID:                    │
+│  - inscriptionId → links to Bitcoin identity                │
+│  - runeId → links to Bitcoin membership                     │
+│  - admin → derived from / authorized by Bitcoin key         │
+│                                                             │
+│  User can redeploy to another L2 at any time.               │
+│  The inscription stays. The identity stays. Only the         │
+│  processing layer changes.                                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -436,24 +514,53 @@ sequencer commitments.
 ### Creating an institution
 
 ```
-1. Admin inscribes institution on Bitcoin (Ordinal)
+1. Admin generates a Bitcoin key pair (x-only Taproot pubkey)
+   → this key IS the institution's identity root
+   → everything else derives from this key
+
+2. Admin inscribes institution on Bitcoin (Ordinal)
    → metaprotocol: "binst", body: institution metadata
    → gets inscription ID: abc123...i0
-   → inscription lives in admin's UTXO → admin owns it
+   → inscription lives in a Taproot vault UTXO → admin owns it
+   → the inscription is the institution's birth certificate
 
-2. Admin etches membership Rune on Bitcoin
+3. Admin etches membership Rune on Bitcoin
    → INSTITUTION•MEMBER, premine: 1
    → admin holds the initial unit
 
-3. Admin deploys Institution.sol on Citrea
-   → constructor gets: name, admin address, inscription_id, rune_id
-   → contract stores the Bitcoin identity references
+4. Admin deploys Institution.sol on an L2 (currently Citrea)
+   → constructor gets: name, admin address
+   → admin calls setInscriptionId() and setRuneId() to bind the contract
+   → the L2 contract is now a DELEGATE of the Bitcoin key holder
 
-4. Citrea contract state reaches Bitcoin via batch proof
+5. L2 state reaches Bitcoin via batch proof
    → institution is now represented THREE ways on Bitcoin:
-      a) Ordinal inscription (identity + metadata)
+      a) Ordinal inscription (identity — AUTHORITATIVE)
       b) Rune (membership token)
       c) State diff in batch proof (computational state)
+```
+
+Note: step 4 can be repeated on any L2. The inscription ID and Rune ID
+stay the same. Only the L2 contract address changes.
+
+### Switching L2s
+
+```
+1. Admin decides to move from Citrea to another L2 (e.g., Stacks)
+
+2. Admin deploys new Institution contract on the new L2
+   → binds it to the SAME inscription ID and rune ID
+
+3. The Bitcoin-layer identity is unchanged:
+   → same inscription, same UTXO, same admin key
+   → same membership Rune, same member balances
+   → provenance chain is intact
+
+4. The old L2 contract becomes historical — its batch proofs
+   remain on Bitcoin as a permanent record of past operations
+
+5. New operations flow through the new L2 contract
+   → the institution continues seamlessly
 ```
 
 ### Adding a member
@@ -463,19 +570,19 @@ sequencer commitments.
    → member now holds membership token in their Bitcoin wallet
    → visible in any Rune-aware wallet or indexer
 
-2. Admin calls addMember(memberAddress) on Citrea
-   → Citrea contract updates member list
+2. Admin calls addMember(memberAddress) on the L2 contract
+   → L2 contract updates member list
    → (optional: contract verifies Rune balance via bridge)
 
-3. Citrea state diff reaches Bitcoin via batch proof
+3. L2 state diff reaches Bitcoin via batch proof
    → member addition is now ZK-proven on Bitcoin
 ```
 
 ### Executing a process step
 
 ```
-1. Member calls executeStep() on Citrea ProcessInstance
-   → complex validation, payment, state transitions happen on Citrea
+1. Member calls executeStep() on L2 ProcessInstance
+   → complex validation, payment, state transitions happen on L2
    → event emitted: StepExecuted(who, stepIndex, timestamp)
 
 2. (Optional) Member inscribes step execution as child of instance
@@ -483,8 +590,27 @@ sequencer commitments.
    → not required for protocol correctness (batch proof handles that)
    → makes it human-readable on explorers
 
-3. Citrea batch proof writes state diff to Bitcoin
+3. L2 batch proof writes state diff to Bitcoin
    → step execution is ZK-proven
+```
+
+### Transferring admin (ownership transfer)
+
+```
+1. Current admin transfers the inscription UTXO to new admin's vault
+   → on Bitcoin: new admin now controls the UTXO (Leaf 0 spend)
+   → the inscription ID stays the same; the controlling key changes
+
+2. New admin calls transferAdmin() on the L2 contract
+   → L2 contract updates admin address to match new key holder
+
+3. Both layers now agree: the new admin controls the institution
+   on Bitcoin (UTXO) and on the L2 (contract state)
+
+Note: if the L2 contract admin disagrees with the UTXO owner,
+the UTXO owner is authoritative. The L2 contract is expected to
+be updated to match. A future version could enforce this via
+a Bitcoin-key-based signature verification on the L2.
 ```
 
 ---
@@ -493,14 +619,15 @@ sequencer commitments.
 
 | Layer | What it proves | Trust assumption | Discoverability | Failure mode |
 |---|---|---|---|---|
-| **Ordinal inscription** | Entity exists, metadata is set, admin controls UTXO | Bitcoin consensus | Any Ordinals explorer/wallet | UTXO accidentally spent → lose ownership signal, data survives |
+| **Ordinal inscription** | Entity exists, metadata is set, **admin controls UTXO** | Bitcoin consensus | Any Ordinals explorer/wallet | UTXO accidentally spent → lose root authority (serious — vault prevents this) |
 | **Rune balance** | This person is a member | Bitcoin consensus | Any Rune indexer/wallet | Token accidentally sent → membership lost until re-minted |
-| **Citrea contract** | Authoritative state: admin, members, processes | Bitcoin consensus + ZK math | Citrea RPC | Citrea down → state frozen, resumes when back |
-| **Citrea batch proof** | Every state transition was computationally correct | Bitcoin consensus + ZK math | taproot-reader + full node | Proof missing → state unverifiable until next batch |
+| **L2 contract** | Processing delegate: executes logic on behalf of BTC key | Bitcoin consensus + ZK math | L2 RPC | L2 down → redeploy on another L2, identity survives on Bitcoin |
+| **L2 batch proof** | Every state transition was computationally correct | Bitcoin consensus + ZK math | taproot-reader + full node | Proof missing → state unverifiable until next batch |
 
-**No single layer is a single point of failure.** The Citrea contract is the
-operational authority; inscriptions and Runes are supplementary Bitcoin-native
-signals. Losing one layer degrades the experience but does not break the protocol.
+**The Bitcoin key is the single root of authority.** L2 contracts are
+replaceable processing delegates. Losing an L2 is graceful — redeploy
+elsewhere. Losing the Bitcoin key is catastrophic — the committee multi-sig
+is the last resort.
 
 ---
 
@@ -524,11 +651,11 @@ linking it across all reachability layers:
 
 ```rust
 pub struct BitcoinIdentity {
-    /// EVM address from Citrea state (always available)
-    pub evm_address: [u8; 20],
-
-    /// Taproot x-only public key (controls the Ordinal inscription)
-    pub bitcoin_pubkey: Option<[u8; 32]>,
+    /// Taproot x-only public key (32 bytes) — ROOT OF AUTHORITY.
+    /// This key controls the inscription UTXO and is the canonical
+    /// identity of the entity. All other fields derive from or
+    /// reference this key.
+    pub bitcoin_pubkey: [u8; 32],
 
     /// Ordinals inscription ID (e.g., "abc123...i0")
     pub inscription_id: Option<String>,
@@ -536,16 +663,19 @@ pub struct BitcoinIdentity {
     /// Rune ID for membership token (e.g., "840000:20")
     pub membership_rune_id: Option<String>,
 
+    /// EVM address on the current L2 (derived from or authorized by the BTC key)
+    pub evm_address: Option<[u8; 20]>,
+
     /// HD derivation path hint (e.g., "m/86'/0'/0'/0/0")
     pub derivation_hint: Option<String>,
 }
 ```
 
-Four layers of reachability:
-1. `evm_address` — find it on Citrea
-2. `bitcoin_pubkey` — verify the controller on Bitcoin
-3. `inscription_id` — look it up on any Ordinals explorer
-4. `membership_rune_id` — check membership in any Rune wallet
+The ordering reflects the authority hierarchy:
+1. `bitcoin_pubkey` — the root of authority (controls the inscription UTXO)
+2. `inscription_id` — the entity's permanent identity on Bitcoin
+3. `membership_rune_id` — membership token on Bitcoin
+4. `evm_address` — the current L2 processing delegate (can change if L2 changes)
 
 ---
 
@@ -554,18 +684,20 @@ Four layers of reachability:
 | What you want to know | Where to look | Full node needed? |
 |---|---|---|
 | Does institution X exist? | Ordinals explorer | ❌ No |
-| Who is the admin? | Inscription UTXO owner | ❌ No |
+| Who is the admin? | Inscription UTXO owner (Bitcoin key) | ❌ No |
 | Am I a member? | Rune balance in wallet | ❌ No |
 | Who are all members? | Rune indexer query | ❌ No |
 | What processes exist? | Child inscriptions | ❌ No |
-| What step is instance Y on? | Citrea RPC | ❌ No |
+| What step is instance Y on? | L2 RPC (currently Citrea) | ❌ No |
 | Was step execution valid? | ZK batch proof decode | ✅ Yes |
 | Full trustless verification? | taproot-reader | ✅ Yes |
+| Which L2 is currently processing? | Inscription metadata or re-inscription | ❌ No |
 
 **Basic discovery requires no custom software and no full node.** Standard
 Ordinals and Rune tooling covers identity, ownership, membership, and
 provenance. The full node is only needed for the strongest verification
-tier — independently confirming ZK proofs.
+tier — independently confirming ZK proofs. And critically: none of this
+depends on any specific L2 being online.
 
 ---
 
@@ -588,7 +720,7 @@ but remain reasonable for institutional operations that happen infrequently.
 
 ## Implementation phases
 
-### Phase 1: Inscription identity
+### Phase 1: Inscription identity ✅
 - Define the `binst` metaprotocol JSON schema (institution/template/instance)
 - Script to inscribe an institution on Bitcoin testnet4 using `ord`
 - **Build Taproot vault script** for inscription UTXOs (NUMS internal key,
@@ -597,25 +729,35 @@ but remain reasonable for institutional operations that happen infrequently.
 - Update taproot-reader to find `binst` metaprotocol inscriptions
 - Update `BitcoinIdentity` struct with `inscription_id`
 
-### Phase 2: Membership Runes
+### Phase 2: Bitcoin-key sovereignty
+- Refactor `BitcoinIdentity` struct: `bitcoin_pubkey` becomes required (root),
+  `evm_address` becomes optional (L2 delegate reference)
+- Add `btcPubkey` field to `Institution.sol` — the L2 contract stores the
+  Bitcoin key it is bound to, making the delegation explicit
+- Explore BTC key → EVM address derivation for trustless binding
+- Document L2 portability: how to migrate from one L2 to another while
+  keeping the same inscription and Rune identity
+
+### Phase 3: Membership Runes
 - Etch a test Rune per institution on testnet4
 - Add `rune_id` field to Institution.sol
 - Script to mint and distribute membership Runes
 - Update `BitcoinIdentity` struct with `membership_rune_id`
-- Explore Clementine bridge for Rune balance verification on Citrea
+- Explore Clementine bridge for Rune balance verification on L2
 
-### Phase 3: Bitcoin-native discovery
+### Phase 4: Bitcoin-native discovery
 - Indexer that watches for `binst` metaprotocol inscriptions
 - API: "list all BINST institutions" → Ordinals query for `metaprotocol=binst`
 - API: "list members of institution X" → Rune balance query for `X•MEMBER`
 - API: "verify institution state" → cross-reference inscription, Rune, batch proof
 
-### Phase 4: Deep Bitcoin integration
+### Phase 5: Deep Bitcoin integration
 - **Covenant-upgraded vault** (when OP_CTV/OP_CAT activates): inscription
   UTXO can only be spent to pre-approved addresses
 - Multi-sig institution admin via Taproot MuSig2
 - Cross-institution process verification using inscription provenance chains
 - Rune-gated access control (hold ≥1 `X•MEMBER` to interact)
+- BTC key signature verification on L2 (trustless delegation proof)
 
 ---
 
