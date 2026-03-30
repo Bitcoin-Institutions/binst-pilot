@@ -106,6 +106,135 @@ the transparency requirement.
 Ownership transfer is a UTXO transfer, not a reinscription. The inscription
 ID stays the same; the controlling key changes.
 
+### UTXO safety: accidental spending risk
+
+Because inscriptions are bound to specific UTXOs, an admin who spends
+the inscription UTXO in a non-Ordinals-aware wallet (e.g., as part of
+a regular payment or consolidation) **loses control of the inscription**.
+The inscription data remains permanently on Bitcoin — it is never
+destroyed — but the UTXO tracking it moves to an unknown party or
+gets consumed as miner fees.
+
+This is a known risk across the entire Ordinals ecosystem, but it is
+**more consequential for BINST** than for image NFTs because losing an
+institution's identity inscription means losing the UTXO-based ownership
+signal.
+
+#### Script-level guard (Taproot vault)
+
+Rather than relying solely on wallet discipline, BINST institution
+inscriptions should be locked in a **Taproot script tree that prevents
+accidental spending at the consensus level**:
+
+```
+Taproot output:
+  Internal key: NUMS point (unspendable — disables key-path spend)
+
+  Script tree:
+    Leaf 0 (admin transfer — time-delayed):
+      <admin_pubkey> OP_CHECKSIG
+      <144> OP_CHECKSEQUENCEVERIFY OP_DROP     ← ~24h delay (144 blocks)
+
+    Leaf 1 (committee override — immediate):
+      <2> <key_A> <key_B> <key_C> <3> OP_CHECKMULTISIG
+```
+
+**How it works:**
+
+| Path | Who | Delay | Purpose |
+|---|---|---|---|
+| Key path | Nobody | ∞ | Disabled (NUMS internal key). No wallet can accidentally spend via key path. |
+| Leaf 0 | Admin (single key) | ~24 hours (144 blocks CSV) | Deliberate admin transfer. The delay gives time to abort if the key is compromised. |
+| Leaf 1 | 2-of-3 committee | Immediate | Emergency override: recover from key loss, or move inscription in time-sensitive situations. |
+
+**Why this works for BINST:**
+
+- **No accidental spending** — the key path is dead. A regular wallet
+  that tries to sign a standard transaction will fail because the
+  internal key is unspendable. Only the script paths work.
+- **Admin retains control** — Leaf 0 lets the admin deliberately move
+  the inscription (e.g., to a new address, or for a re-inscription),
+  but the CSV delay acts as a safety net.
+- **Committee backstop** — Leaf 1 is the "break glass" path. If the
+  admin key is lost or compromised, the 2-of-3 multi-sig can recover
+  the inscription immediately.
+- **Standard Bitcoin** — this uses only Taproot features available today
+  (BIP 341/342, OP_CHECKSIG, OP_CHECKSEQUENCEVERIFY, OP_CHECKMULTISIG).
+  No OP_CTV or OP_CAT needed.
+- **Ordinals-compatible** — the `ord` indexer tracks inscriptions by
+  ordinal theory regardless of the spending script. A Taproot script
+  tree does not interfere with inscription tracking.
+
+**Future enhancement with covenants:** When OP_CTV or OP_CAT activates
+on Bitcoin, the script can be upgraded to enforce that the inscription
+UTXO can *only* be spent to a pre-defined set of addresses (e.g., back
+to the admin's own vault). This would make it truly non-transferable
+except via explicit covenant paths.
+
+#### Sat isolation (dedicated UTXO)
+
+The inscribed satoshi should live on its own **dedicated, minimal UTXO**
+— separate from any spending funds. This is standard Ordinals practice
+and the `ord` tooling does it by default.
+
+During the reveal transaction, two outputs are created:
+
+```
+Reveal TX:
+  Input 0:  commit UTXO (inscription envelope in witness)
+
+  Output 0: 546 sats → Taproot vault address (script-guarded)
+             ↑ the inscribed sat lives HERE, alone
+             ├── NUMS internal key (no key-path spend)
+             ├── Leaf 0: admin + 144-block CSV delay
+             └── Leaf 1: 2-of-3 committee multisig
+
+  Output 1: change → admin's regular spending wallet
+             Normal sats, freely spendable, no inscription.
+```
+
+The **pointer tag** (Ordinals tag 2) in the envelope explicitly binds
+the inscription to the first satoshi of output 0. This guarantees:
+
+- The inscribed sat is **physically isolated** — 546 sats (dust limit),
+  containing nothing of spending value
+- Change sats go to a **separate output** on a regular address
+- No economic incentive to sweep the inscription UTXO
+- Combined with the Taproot vault script: the isolated UTXO is also
+  **consensus-locked** against accidental spends
+
+This gives two independent layers of protection:
+1. **Economic** — dust-limit UTXO has no spending value to attract
+2. **Consensus** — script guard prevents spending even if attempted
+
+#### Additional mitigations
+
+| Layer | Mitigation | Effect |
+|---|---|---|
+| Wallet discipline | Use only Ordinals-aware wallets (Xverse, Unisat, `ord wallet`) | Inscription UTXOs are frozen and cannot be accidentally spent |
+| Key isolation | Dedicated key/address for inscription UTXOs only | No mixing with spending funds eliminates accidental inclusion |
+| Protocol design | Inscription = identity record, **not** sole ownership proof | Citrea contract (`admin` address) is the authoritative owner |
+| Recovery path | Re-inscribe as child of original + update Citrea contract | Admin can recover from UTXO loss without losing history |
+
+#### Graceful degradation
+
+**The critical design principle:** the Citrea smart contract is always
+the authoritative source of truth for who controls an institution. The
+inscription UTXO is a *strong supplementary signal* — it lets anyone
+on Bitcoin verify ownership without Citrea — but it is not a single
+point of failure. If the inscription UTXO is somehow lost despite the
+script guard:
+
+1. The inscription **data** is permanent and readable forever
+2. The Citrea contract **continues to function** normally
+3. The admin **re-inscribes** a recovery record (child of the original)
+4. The Citrea contract is **updated** to reference the new inscription
+5. The original inscription's provenance chain is **preserved**
+
+This means BINST degrades gracefully: losing the UTXO costs you the
+Bitcoin-native ownership proof, but the institution keeps running on
+Citrea while you recover.
+
 ### Discovery
 
 BINST inscriptions are discoverable through standard tooling:
@@ -275,12 +404,16 @@ sequencer commitments.
 
 ## What each layer guarantees
 
-| Layer | What it proves | Trust assumption | Discoverability |
-|---|---|---|---|
-| **Ordinal inscription** | Entity exists, metadata is set, admin controls it | Bitcoin consensus | Any Ordinals explorer/wallet |
-| **Rune balance** | This person is a member | Bitcoin consensus | Any Rune indexer/wallet |
-| **Citrea batch proof** | Every state transition was computationally correct | Bitcoin consensus + ZK math | taproot-reader + full node |
-| **Citrea RPC** | Current live state | Trust Citrea node operator | Citrea RPC access |
+| Layer | What it proves | Trust assumption | Discoverability | Failure mode |
+|---|---|---|---|---|
+| **Ordinal inscription** | Entity exists, metadata is set, admin controls UTXO | Bitcoin consensus | Any Ordinals explorer/wallet | UTXO accidentally spent → lose ownership signal, data survives |
+| **Rune balance** | This person is a member | Bitcoin consensus | Any Rune indexer/wallet | Token accidentally sent → membership lost until re-minted |
+| **Citrea contract** | Authoritative state: admin, members, processes | Bitcoin consensus + ZK math | Citrea RPC | Citrea down → state frozen, resumes when back |
+| **Citrea batch proof** | Every state transition was computationally correct | Bitcoin consensus + ZK math | taproot-reader + full node | Proof missing → state unverifiable until next batch |
+
+**No single layer is a single point of failure.** The Citrea contract is the
+operational authority; inscriptions and Runes are supplementary Bitcoin-native
+signals. Losing one layer degrades the experience but does not break the protocol.
 
 ---
 
@@ -371,6 +504,8 @@ but remain reasonable for institutional operations that happen infrequently.
 ### Phase 1: Inscription identity
 - Define the `binst` metaprotocol JSON schema (institution/template/instance)
 - Script to inscribe an institution on Bitcoin testnet4 using `ord`
+- **Build Taproot vault script** for inscription UTXOs (NUMS internal key,
+  admin CSV-delayed path, 2-of-3 committee override path)
 - Add `inscription_id` field to Solidity contracts
 - Update taproot-reader to find `binst` metaprotocol inscriptions
 - Update `BitcoinIdentity` struct with `inscription_id`
@@ -389,7 +524,8 @@ but remain reasonable for institutional operations that happen infrequently.
 - API: "verify institution state" → cross-reference inscription, Rune, batch proof
 
 ### Phase 4: Deep Bitcoin integration
-- Covenant-guarded institution treasuries (if OP_CTV/OP_CAT activates)
+- **Covenant-upgraded vault** (when OP_CTV/OP_CAT activates): inscription
+  UTXO can only be spent to pre-approved addresses
 - Multi-sig institution admin via Taproot MuSig2
 - Cross-institution process verification using inscription provenance chains
 - Rune-gated access control (hold ≥1 `X•MEMBER` to interact)
