@@ -12,9 +12,9 @@
  *   - Wallet funded with testnet4 BTC (faucet: https://faucet.testnet4.dev)
  *
  * Usage:
- *   npx ts-node scripts/inscribe-binst.ts institution <name> <admin_pubkey> [citrea_contract]
- *   npx ts-node scripts/inscribe-binst.ts template <name> <parent_inscription_id> <steps_json>
- *   npx ts-node scripts/inscribe-binst.ts instance <creator_pubkey> <parent_inscription_id>
+ *   npx ts-node scripts/inscribe-binst.ts institution <name> <admin_pubkey> [citrea_contract] [--destination <vault_address>]
+ *   npx ts-node scripts/inscribe-binst.ts template <name> <parent_inscription_id> <steps_json> [citrea_contract] [--destination <vault_address>]
+ *   npx ts-node scripts/inscribe-binst.ts instance <creator_pubkey> <parent_inscription_id> [citrea_contract] [--destination <vault_address>]
  *
  * This outputs the ord command and creates a temporary JSON file for the body.
  */
@@ -128,10 +128,22 @@ function generateOrdCommand(
   };
 }
 
+// ── Flag parsing ─────────────────────────────────────────────────
+
+function extractFlag(args: string[], flag: string): { value: string | undefined; rest: string[] } {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return { value: undefined, rest: args };
+  const value = args[idx + 1];
+  const rest = [...args.slice(0, idx), ...args.slice(idx + 2)];
+  return { value, rest };
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 
 function main() {
-  const [entityType, ...rest] = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  const { value: destination, rest: args } = extractFlag(rawArgs, "--destination");
+  const [entityType, ...rest] = args;
 
   if (!entityType) {
     printUsage();
@@ -142,11 +154,11 @@ function main() {
     case "institution": {
       const [name, adminPubkey, citreaContract] = rest;
       if (!name || !adminPubkey) {
-        console.error("Usage: inscribe-binst.ts institution <name> <admin_pubkey> [citrea_contract]");
+        console.error("Usage: inscribe-binst.ts institution <name> <admin_pubkey> [citrea_contract] [--destination <vault_addr>]");
         process.exit(1);
       }
       const body = buildInstitution(name, adminPubkey, citreaContract);
-      const { bodyFile, command } = generateOrdCommand(body);
+      const { bodyFile, command } = generateOrdCommand(body, undefined, destination);
 
       console.log("═══ BINST Institution Inscription ═══\n");
       console.log("Body JSON:");
@@ -159,6 +171,14 @@ function main() {
       console.log("  becomes the parent for all process templates under this institution.");
       console.log("• After inscribing, call setInscriptionId() on the Citrea contract");
       console.log("  with the returned inscription ID.");
+      if (destination) {
+        console.log(`• Inscription will be sent to vault: ${destination}`);
+        console.log("  Admin can unlock via Leaf 0 (CSV delay) after ~144 blocks.");
+        console.log("  Committee can unlock via Leaf 1 (2-of-3 multisig) immediately.");
+      } else {
+        console.log("• TIP: Use --destination <vault_address> to lock the inscription");
+        console.log("  in a Taproot vault. Generate a vault address with taproot-vault.ts.");
+      }
       break;
     }
 
@@ -172,7 +192,7 @@ function main() {
       }
       const steps = JSON.parse(stepsJson);
       const body = buildProcessTemplate(name, steps, citreaContract);
-      const { bodyFile, command } = generateOrdCommand(body, parentId);
+      const { bodyFile, command } = generateOrdCommand(body, parentId, destination);
 
       console.log("═══ BINST Process Template Inscription ═══\n");
       console.log("Body JSON:");
@@ -194,7 +214,7 @@ function main() {
         process.exit(1);
       }
       const body = buildProcessInstance(creatorPubkey, citreaContract);
-      const { bodyFile, command } = generateOrdCommand(body, parentId);
+      const { bodyFile, command } = generateOrdCommand(body, parentId, destination);
 
       console.log("═══ BINST Process Instance Inscription ═══\n");
       console.log("Body JSON:");

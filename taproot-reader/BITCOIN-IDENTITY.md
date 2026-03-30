@@ -171,6 +171,93 @@ UTXO can *only* be spent to a pre-defined set of addresses (e.g., back
 to the admin's own vault). This would make it truly non-transferable
 except via explicit covenant paths.
 
+#### Spending from the vault (unlock flow)
+
+The vault **locks** the inscription UTXO, but it does not make it
+permanently frozen. The admin can deliberately unlock it whenever needed.
+Here is exactly what happens for each path:
+
+**Path A — Admin transfer (Leaf 0, ~24h delay):**
+
+```
+1. Admin decides to move the inscription (e.g., to a new vault,
+   to transfer ownership, or to perform a reinscription).
+
+2. Admin waits until the UTXO is at least 144 blocks old
+   (relative lock-time from when the UTXO was created/last spent).
+
+3. Admin constructs a Bitcoin transaction:
+   - Input: the vault UTXO
+     - nSequence = 144 (satisfies OP_CHECKSEQUENCEVERIFY)
+     - Witness: <admin_signature> <leaf_0_script> <control_block>
+       where control_block = internal_key ‖ merkle_proof_to_leaf_0
+   - Output 0: new destination address (e.g., a fresh vault for the same
+     admin, or a new owner's vault address)
+   - Output 1: change (if any)
+
+4. Bitcoin consensus validates:
+   a) admin_signature is valid for admin_pubkey    → OP_CHECKSIG ✓
+   b) nSequence ≥ 144 blocks have passed           → OP_CSV ✓
+   c) Taproot script-path commitment is correct     → control_block ✓
+
+5. Transaction confirms. The inscription sat moves to the new output.
+   The ord indexer updates the ownership record.
+```
+
+**Path B — Committee override (Leaf 1, immediate):**
+
+```
+1. Emergency: admin key is lost/compromised, or the institution
+   needs to move the inscription urgently.
+
+2. Two of three committee members agree and co-sign.
+
+3. Committee constructs a Bitcoin transaction:
+   - Input: the vault UTXO
+     - nSequence = 0 (no CSV required on this leaf)
+     - Witness: <0x00> <sig_A> <sig_B> <leaf_1_script> <control_block>
+       where control_block = internal_key ‖ merkle_proof_to_leaf_1
+   - Output 0: recovery destination
+
+4. Bitcoin consensus validates:
+   a) 2-of-3 multisig is satisfied                → OP_CHECKMULTISIG ✓
+   b) Taproot script-path commitment is correct    → control_block ✓
+
+5. Transaction confirms immediately (no waiting period).
+```
+
+**Re-locking after a spend:**
+
+When the inscription moves out of the vault, the admin should send it
+to a **new vault address** (generated with the same or updated keys)
+to maintain the script-guard protection. The cycle is:
+
+```
+  Vault A  ──(admin spends after CSV)──▶  Vault B  ──(...)──▶  Vault C
+    │                                        │
+    └── inscription sat protected             └── re-locked, CSV resets
+```
+
+Each vault-to-vault transfer **resets the CSV timer** — the 144-block
+countdown starts fresh from the block where Vault B's UTXO is confirmed.
+
+**When would the admin unlock?**
+
+| Scenario | Which path | What happens next |
+|---|---|---|
+| Transfer institution to new admin | Leaf 0 (admin) | Send to new admin's vault; update Citrea `transferAdmin()` |
+| Rotate admin key | Leaf 0 (admin) | Send to vault with new admin pubkey |
+| Reinscribe (update metadata) | Leaf 0 (admin) | Spend → new reveal TX → re-vault |
+| Admin key compromised | Leaf 1 (committee) | Committee moves to safe address; admin rotates keys |
+| Admin key lost | Leaf 1 (committee) | Committee recovers to new admin's vault |
+| Move to covenant-upgraded vault | Leaf 0 (admin) | Migrate to OP_CTV vault when available |
+
+**What if the admin never needs to unlock?**
+
+That's fine — the inscription sits in the vault indefinitely. The sat is
+safe, the inscription data is permanent, and the Citrea contract keeps
+running. The vault is a safety net, not a requirement for normal operations.
+
 #### Sat isolation (dedicated UTXO)
 
 The inscribed satoshi should live on its own **dedicated, minimal UTXO**
