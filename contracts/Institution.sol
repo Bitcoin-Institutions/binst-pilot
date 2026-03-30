@@ -12,6 +12,11 @@ import "./process/ProcessTemplate.sol";
  *      separate contract with its own address, making it independently
  *      verifiable on block explorers and linkable from a webapp.
  *
+ *      Bitcoin-native identity:
+ *        - inscriptionId links to the Ordinals inscription on Bitcoin L1
+ *        - runeId links to the institution's membership Rune
+ *        See BITCOIN-IDENTITY.md for the full architecture.
+ *
  *      Minimal scope for the pilot:
  *        - Admin can add/remove members
  *        - Members (and admin) can create processes
@@ -23,6 +28,14 @@ contract Institution {
     address public admin;
     address public deployer; // BINSTDeployer that created this
 
+    /// @notice Ordinals inscription ID on Bitcoin (e.g., "<txid>i0").
+    ///         Set after inscribing the institution on Bitcoin L1.
+    string public inscriptionId;
+
+    /// @notice Rune ID for membership token (e.g., "840000:20").
+    ///         Set after etching the membership Rune on Bitcoin L1.
+    string public runeId;
+
     address[] public members;
     mapping(address => bool) public isMember;
     
@@ -32,6 +45,8 @@ contract Institution {
     event MemberRemoved(address indexed member);
     event ProcessCreated(address indexed process, string processName, address indexed creator);
     event AdminTransferred(address indexed oldAdmin, address indexed newAdmin);
+    event InscriptionIdSet(string inscriptionId);
+    event RuneIdSet(string runeId);
 
     modifier onlyAdmin() {
         require(msg.sender == admin, "Only admin");
@@ -131,6 +146,32 @@ contract Institution {
         emit ProcessCreated(processAddr, _name, msg.sender);
 
         return processAddr;
+    }
+
+    // ── Bitcoin identity ────────────────────────────────────────────
+
+    /**
+     * @notice Link this institution to its Ordinals inscription on Bitcoin.
+     *         Can only be set once (immutable after initial link).
+     * @param _inscriptionId The inscription ID (e.g., "<txid>i0")
+     */
+    function setInscriptionId(string calldata _inscriptionId) external onlyAdmin {
+        require(bytes(inscriptionId).length == 0, "Inscription ID already set");
+        require(bytes(_inscriptionId).length > 0, "Empty inscription ID");
+        inscriptionId = _inscriptionId;
+        emit InscriptionIdSet(_inscriptionId);
+    }
+
+    /**
+     * @notice Link this institution to its membership Rune on Bitcoin.
+     *         Can only be set once (immutable after initial link).
+     * @param _runeId The Rune ID (e.g., "840000:20")
+     */
+    function setRuneId(string calldata _runeId) external onlyAdmin {
+        require(bytes(runeId).length == 0, "Rune ID already set");
+        require(bytes(_runeId).length > 0, "Empty rune ID");
+        runeId = _runeId;
+        emit RuneIdSet(_runeId);
     }
 
     // ── Views (free reads for webapp) ────────────────────────────

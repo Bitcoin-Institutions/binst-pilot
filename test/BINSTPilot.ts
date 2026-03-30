@@ -252,4 +252,92 @@ describe("BINST Pilot", function () {
       assert.equal(await instance.read.isCompleted(), true);
     });
   });
+
+  // ── Bitcoin Identity ───────────────────────────────────────────
+
+  describe("Bitcoin Identity", function () {
+    it("Should set and read inscription ID", async function () {
+      const binstDeployer = await connection.viem.deployContract("BINSTDeployer");
+
+      const txHash = await binstDeployer.write.createInstitution(["Inscription Test"]);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const institutions = await binstDeployer.read.getInstitutions();
+      const inst = await connection.viem.getContractAt("Institution", institutions[0]);
+
+      // Initially empty
+      assert.equal(await inst.read.inscriptionId(), "");
+
+      // Set inscription ID
+      const testInscriptionId = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2i0";
+      const setTx = await inst.write.setInscriptionId([testInscriptionId]);
+      await publicClient.waitForTransactionReceipt({ hash: setTx });
+
+      assert.equal(await inst.read.inscriptionId(), testInscriptionId);
+    });
+
+    it("Should set and read rune ID", async function () {
+      const binstDeployer = await connection.viem.deployContract("BINSTDeployer");
+
+      const txHash = await binstDeployer.write.createInstitution(["Rune Test"]);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const institutions = await binstDeployer.read.getInstitutions();
+      const inst = await connection.viem.getContractAt("Institution", institutions[0]);
+
+      // Initially empty
+      assert.equal(await inst.read.runeId(), "");
+
+      // Set rune ID
+      const testRuneId = "840000:20";
+      const setTx = await inst.write.setRuneId([testRuneId]);
+      await publicClient.waitForTransactionReceipt({ hash: setTx });
+
+      assert.equal(await inst.read.runeId(), testRuneId);
+    });
+
+    it("Should not allow setting inscription ID twice", async function () {
+      const binstDeployer = await connection.viem.deployContract("BINSTDeployer");
+
+      const txHash = await binstDeployer.write.createInstitution(["Immutable Test"]);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const institutions = await binstDeployer.read.getInstitutions();
+      const inst = await connection.viem.getContractAt("Institution", institutions[0]);
+
+      // Set once — should succeed
+      const setTx = await inst.write.setInscriptionId(["abc123i0"]);
+      await publicClient.waitForTransactionReceipt({ hash: setTx });
+
+      // Set again — should revert
+      await assert.rejects(
+        async () => {
+          await inst.write.setInscriptionId(["def456i0"]);
+        },
+      );
+    });
+
+    it("Should not allow non-admin to set inscription ID", async function () {
+      const binstDeployer = await connection.viem.deployContract("BINSTDeployer");
+
+      const txHash = await binstDeployer.write.createInstitution(["Admin Only Test"]);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const institutions = await binstDeployer.read.getInstitutions();
+      const inst = await connection.viem.getContractAt("Institution", institutions[0]);
+
+      // Try setting from a non-admin address
+      const wallets = await connection.viem.getWalletClients();
+      if (wallets.length > 1) {
+        const nonAdmin = wallets[1];
+        await assert.rejects(
+          async () => {
+            await inst.write.setInscriptionId(["abc123i0"], {
+              account: nonAdmin.account,
+            });
+          },
+        );
+      }
+    });
+  });
 });
