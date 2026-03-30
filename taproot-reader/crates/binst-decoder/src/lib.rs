@@ -1,0 +1,32 @@
+//! # binst-decoder
+//!
+//! Map Citrea DA state diffs to BINST protocol entities.
+//!
+//! This crate sits above `citrea-decoder` and adds BINST-specific knowledge:
+//!
+//! - **Storage layout** — deterministic slot formulas for `Institution.sol`,
+//!   `ProcessTemplate.sol`, `ProcessInstance.sol`, and `BINSTDeployer.sol`.
+//!
+//! - **Entity types** — `InstitutionState`, `ProcessTemplateState`,
+//!   `ProcessInstanceState`, each carrying an optional `BitcoinIdentity`
+//!   (forward-compatible with Taproot-based institution identity).
+//!
+//! - **State reconstruction** — given a stream of `(contract, slot, value)`
+//!   tuples extracted from batch-proof state diffs, reconstruct the full
+//!   protocol state: institution names, members, process progress, etc.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! Bitcoin block
+//!   → citrea-decoder  (find Citrea inscriptions, decode Borsh)
+//!     → batch proof body  (contains compressed state diff)
+//!       → binst-decoder  (map storage slots → protocol entities)
+//!         → InstitutionState, ProcessTemplateState, ProcessInstanceState
+//! ```
+
+pub mod entities;
+pub mod storage;
+
+pub use entities::*;
+pub use storage::*;
