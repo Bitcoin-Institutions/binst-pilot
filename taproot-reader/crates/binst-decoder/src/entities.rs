@@ -1,13 +1,19 @@
 //! BINST protocol entity types reconstructed from storage diffs.
 //!
 //! These types represent the protocol's domain objects as decoded from
-//! Bitcoin (via Citrea state diffs).  Every type carries a
-//! `bitcoin_identity` field linking it across all reachability layers:
+//! Bitcoin (via L2 state diffs).  Every type carries a
+//! `bitcoin_identity` field linking it across all reachability layers.
 //!
-//! - **EVM address** — find it on Citrea
-//! - **Bitcoin pubkey** — verify the controller on Bitcoin
-//! - **Inscription ID** — look it up on any Ordinals explorer
+//! Authority model — Bitcoin key is sovereign:
+//!
+//! - **Bitcoin pubkey** — ROOT OF AUTHORITY, controls the inscription UTXO
+//! - **Inscription ID** — the entity's permanent identity on Bitcoin
 //! - **Membership Rune ID** — check membership in any Rune wallet
+//! - **EVM address** — current L2 processing delegate (can change if L2 changes)
+//!
+//! The L2 contract is a delegate, not the owner. The Bitcoin key holder
+//! can redeploy to a different L2 at any time while keeping the same
+//! inscription and Rune identity.
 //!
 //! See `BITCOIN-IDENTITY.md` for the full architecture specification.
 
@@ -16,28 +22,25 @@ use serde::{Deserialize, Serialize};
 // ── Bitcoin identity ─────────────────────────────────────────────
 
 /// A Bitcoin-native identity that links a BINST entity across all
-/// reachability layers: Citrea (EVM), Ordinals (inscriptions), and
-/// Runes (membership tokens).
+/// reachability layers: Bitcoin (inscriptions, Runes) and L2 (EVM contracts).
 ///
-/// The struct is designed so that code starts with just `evm_address`
-/// (always available from Citrea state) and progressively gains richer
-/// Bitcoin identity as inscriptions and Runes are discovered.
+/// The Bitcoin key is the **root of authority**. The entity is defined by
+/// the key that controls its inscription UTXO. The L2 EVM address is a
+/// processing delegate — it can change if the user switches L2s, but the
+/// Bitcoin identity remains the same.
 ///
-/// Four layers of reachability:
-/// 1. `evm_address` — find it on Citrea
-/// 2. `bitcoin_pubkey` — verify the controller on Bitcoin
-/// 3. `inscription_id` — look it up on any Ordinals explorer
-/// 4. `membership_rune_id` — check membership in any Rune wallet
+/// Authority hierarchy:
+/// 1. `bitcoin_pubkey` — root of authority (controls the inscription UTXO)
+/// 2. `inscription_id` — the entity's permanent identity on Bitcoin
+/// 3. `membership_rune_id` — membership token on Bitcoin
+/// 4. `evm_address` — current L2 processing delegate (optional, can change)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BitcoinIdentity {
-    /// The EVM address (20 bytes) of the admin / creator.
-    /// Always available — derived from Citrea state.
-    pub evm_address: [u8; 20],
-
-    /// Optional x-only Taproot public key (32 bytes).
-    /// When set, this is the canonical Bitcoin identity of the entity.
-    /// Controls the Ordinal inscription UTXO.
-    pub bitcoin_pubkey: Option<[u8; 32]>,
+    /// x-only Taproot public key (32 bytes) — ROOT OF AUTHORITY.
+    /// Controls the Ordinal inscription UTXO. Whoever holds the
+    /// corresponding private key is the canonical owner of this entity.
+    /// All other fields derive from or reference this key.
+    pub bitcoin_pubkey: [u8; 32],
 
     /// Ordinals inscription ID (e.g., "abc123...i0").
     /// Links to the entity's permanent identity inscription on Bitcoin.
@@ -49,58 +52,76 @@ pub struct BitcoinIdentity {
     /// Discoverable via any Rune indexer or wallet.
     pub membership_rune_id: Option<String>,
 
+    /// The EVM address (20 bytes) on the current L2 processing delegate.
+    /// This is derived from or authorized by the Bitcoin key. It can change
+    /// if the user redeploys to a different L2.
+    pub evm_address: Option<[u8; 20]>,
+
     /// Optional derivation path or label for the key.
     /// Useful for HD wallets: e.g. "m/86'/0'/0'/0/0".
     pub derivation_hint: Option<String>,
 }
 
 impl BitcoinIdentity {
-    /// Create an identity from just an EVM address (no Bitcoin key yet).
-    pub fn from_evm(address: [u8; 20]) -> Self {
+    /// Create an identity from a Bitcoin public key (the root of authority).
+    pub fn from_pubkey(pubkey: [u8; 32]) -> Self {
         Self {
-            evm_address: address,
-            bitcoin_pubkey: None,
+            bitcoin_pubkey: pubkey,
             inscription_id: None,
             membership_rune_id: None,
+            evm_address: None,
             derivation_hint: None,
         }
     }
 
-    /// Create an identity with EVM address and Bitcoin key.
-    pub fn with_bitcoin_key(
-        evm_address: [u8; 20],
+    /// Create an identity from an EVM address when the Bitcoin key is not
+    /// yet known. Uses a zeroed pubkey as placeholder — caller must set the
+    /// real pubkey when discovered.
+    pub fn from_evm(address: [u8; 20]) -> Self {
+        Self {
+            bitcoin_pubkey: [0u8; 32],
+            inscription_id: None,
+            membership_rune_id: None,
+            evm_address: Some(address),
+            derivation_hint: None,
+        }
+    }
+
+    /// Create an identity with Bitcoin key and L2 EVM address.
+    pub fn with_evm(
         pubkey: [u8; 32],
+        evm_address: [u8; 20],
         derivation_hint: Option<String>,
     ) -> Self {
         Self {
-            evm_address,
-            bitcoin_pubkey: Some(pubkey),
+            bitcoin_pubkey: pubkey,
             inscription_id: None,
             membership_rune_id: None,
+            evm_address: Some(evm_address),
             derivation_hint,
         }
     }
 
     /// Create a full identity with all reachability layers.
     pub fn full(
-        evm_address: [u8; 20],
         pubkey: [u8; 32],
         inscription_id: String,
         membership_rune_id: Option<String>,
+        evm_address: Option<[u8; 20]>,
         derivation_hint: Option<String>,
     ) -> Self {
         Self {
-            evm_address,
-            bitcoin_pubkey: Some(pubkey),
+            bitcoin_pubkey: pubkey,
             inscription_id: Some(inscription_id),
             membership_rune_id,
+            evm_address,
             derivation_hint,
         }
     }
 
-    /// Whether this identity has a Bitcoin-native key.
+    /// Whether this identity has a real Bitcoin key (not zeroed placeholder).
     pub fn has_bitcoin_key(&self) -> bool {
-        self.bitcoin_pubkey.is_some()
+        self.bitcoin_pubkey != [0u8; 32]
     }
 
     /// Whether this identity has an Ordinals inscription.
@@ -113,10 +134,19 @@ impl BitcoinIdentity {
         self.membership_rune_id.is_some()
     }
 
+    /// Whether this identity has an L2 delegate address.
+    pub fn has_evm_delegate(&self) -> bool {
+        self.evm_address.is_some()
+    }
+
     /// Return the Taproot address (bech32m) if a Bitcoin key is set.
     /// Placeholder — actual encoding requires network param and bech32m.
     pub fn taproot_address_hint(&self) -> Option<String> {
-        self.bitcoin_pubkey.map(|pk| format!("tb1p{}", hex::encode(&pk[..20])))
+        if self.has_bitcoin_key() {
+            Some(format!("tb1p{}", hex::encode(&self.bitcoin_pubkey[..20])))
+        } else {
+            None
+        }
     }
 }
 

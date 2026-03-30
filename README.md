@@ -1,380 +1,222 @@
-# BINST Pilot -- Bitcoin-Anchored Institutional Processes on Citrea# BINST Pilot — Bitcoin-Anchored Institutional Processes on Citrea# BINST Pilot — Bitcoin-Anchored Institutional Processes on Citrea
+# BINST Pilot — Bitcoin-Sovereign Institutional Processes
 
-
-
-Proof-of-concept demonstrating **institutional processes** (KYC, compliance, approvals) running on **Citrea** -- a ZK rollup on Bitcoin -- where all activity is automatically committed to Bitcoin via sequencer commitments and ZK batch proofs.
-
-
-
-## ArchitectureProof-of-concept demonstrating institutional processes (KYC, compliance, approvals) running on **Citrea** — a ZK rollup on Bitcoin — where all activity is automatically committed to Bitcoin via sequencer commitments and ZK batch proofs.Proof-of-concept demonstrating institutional processes (KYC, compliance, approvals) running on **Citrea** — a ZK rollup on Bitcoin — with on-chain proof that all activity is anchored to Bitcoin via ZK batch proofs.
-
-
+Proof-of-concept: institutional processes (KYC, compliance, approvals) where
+**the Bitcoin key is the root of authority**. Identity lives on Bitcoin via
+Ordinals inscriptions. Membership lives on Bitcoin via Runes. Complex logic
+executes on an L2 (currently Citrea) as a **delegate** of the key holder —
+portable to any future L2.
 
 ```
+Bitcoin L1 (ROOT OF AUTHORITY)
+├── Ordinals    → entities EXIST here  (inscriptions = identity)
+├── Runes       → membership IS here   (tokens = roles)
+└── ZK proofs   → computation PROVEN   (L2 batch proofs)
 
-+-------------------------------------------------------------+
+L2 — currently Citrea (PROCESSING DELEGATE)
+└── Solidity    → complex logic executes on behalf of BTC key holder
+```
 
-|  Citrea (ZK Rollup on Bitcoin)        Chain ID: 5115 (test)  |## Architecture## Architecture
+---
 
-|                                                              |
+## Architecture
 
-|  +---------------+                                           |
+```
+┌─────────────────────────────────────────────────────────────┐
+│               BITCOIN (L1) — ROOT OF AUTHORITY               │
+│                                                             │
+│  ┌───────────────────────┐    ┌──────────────────────────┐  │
+│  │  ORDINAL INSCRIPTIONS  │    │        RUNES             │  │
+│  │  metaprotocol: "binst" │    │  ACME•MEMBER (fungible)  │  │
+│  │                        │    │                          │  │
+│  │  Institution           │    │  Hold ≥1 = member        │  │
+│  │   └─ ProcessTemplate   │    │  Visible in any Rune     │  │
+│  │       └─ Instance      │    │  wallet or indexer       │  │
+│  │           └─ StepEvent │    │                          │  │
+│  │                        │    │                          │  │
+│  │  UTXO owner = admin    │    │                          │  │
+│  │  ★ AUTHORITATIVE ★    │    │                          │  │
+│  └───────────────────────┘    └──────────────────────────┘  │
+│                                                             │
+│  Taproot vault: NUMS key path (unspendable) + script guard  │
+│  Admin: CSV-delayed spend │ Committee: 2-of-3 immediate     │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ ZK batch proofs
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│           L2 PROCESSING DELEGATE (currently Citrea)          │
+│                                                             │
+│  BINSTDeployer → Institution → ProcessTemplate → Instance   │
+│                                                             │
+│  Contract is BOUND TO inscription ID.                       │
+│  User can redeploy to any L2 — identity stays on Bitcoin.   │
+└─────────────────────────────────────────────────────────────┘
+```
 
-|  | BINSTDeployer  |-- createInstitution() --.                |
+### Authority model
 
-|  | (factory /     |-- deployProcess()  -.   |                |``````
+The Bitcoin private key controls everything:
 
-|  |  registry)     |                     |   |                |
+| Layer | What it controls | Can the user switch it? |
+|-------|-----------------|------------------------|
+| **Inscription UTXO** | Identity, metadata, provenance | No — this IS the identity |
+| **Rune distribution** | Membership tokens | No — lives on Bitcoin L1 |
+| **L2 contract** | Processing logic (workflows, payments) | **Yes** — redeploy to any L2 |
 
-|  +---------------+                      |   |                |┌─────────────────────────────────────────────────────────────┐┌─────────────────────────────────────────────────────────────┐
+Losing the L2 is graceful (redeploy elsewhere). Losing the Bitcoin key is
+catastrophic (committee multi-sig recovery required).
 
-|          |                              v   v                |
+---
 
-|  +---------------+   +-----------------+   +---------------+ |│  Citrea (ZK Rollup on Bitcoin)        Chain ID: 5115 (test) ││  Citrea (ZK Rollup on Bitcoin)        Chain ID: 5115 (test) │
-
-|  | Institution   |-->| ProcessTemplate |-->|ProcessInstance | |
-
-|  | (entity, the  |   | (blueprint)     |   |(running exec) | |│                                                             ││                                                             │
-
-|  |  "I" in BINST)|   +-----------------+   +---------------+ |
-
-|  | - members     |                                           |│  ┌──────────────┐  ┌────────────────┐  ┌──────────────────┐││  ┌──────────────┐  ┌────────────────┐  ┌──────────────────┐│
-
-|  | - processes   |                                           |
-
-|  +---------------+                                           |│  │BINSTDeployer │→ │ProcessTemplate │→ │ProcessInstance   │││  │BINSTDeployer │→ │ProcessTemplate │→ │ProcessInstance   ││
-
-|                                                              |
-
-|  +----------------------------------------------------------+|│  │(factory)     │  │(blueprint)     │  │(running process) │││  │(factory)     │  │(blueprint)     │  │(running process) ││
-
-|  | Citrea System Contracts (pre-deployed, not ours)          ||
-
-|  |  Bitcoin Light Client  0x3100...0001 -- BTC block hashes  ||│  └──────────────┘  └────────────────┘  └──────────────────┘││  └──────────────┘  └────────────────┘  └──────────────────┘│
-
-|  |  Bridge (Clementine)   0x3100...0002 -- BTC <-> cBTC     ||
-
-|  |  Schnorr Precompile    0x0000...0200 -- BIP-340 verify   ||│   Protocol-critical contracts: state, registry, execution   ││                                                             │
-
-|  +----------------------------------------------------------+|
-
-|                              ^                                |│                                                             ││  ┌──────────────────────────────────────────────────────┐  │
-
-|              Read via eth_call (free, no gas)                 |
-
-|              by off-chain scripts and webapp                  |│  ┌──────────────────────────────────────────────────────────┐││  │ BitcoinAnchor                                         │  │
-
-+-----------------------------+--------------------------------+
-
-                              | Citrea rollup pipeline (auto)│  │ Citrea System Contracts (pre-deployed, not ours)         │││  │ Reads Citrea Bitcoin Light Client (0x31...0001)       │  │
-
-                              v
-
-+-------------------------------------------------------------+│  │  Bitcoin Light Client  0x3100...0001  — BTC block hashes │││  │ → Records BTC block hash at process milestones        │  │
-
-|  Bitcoin (Testnet4)                                          |
-
-|  -> Sequencer commitments (ordering)                         |│  │  Bridge (Clementine)   0x3100...0002  — BTC ↔ cBTC      │││  │ → Proves activity is committed to Bitcoin via ZK      │  │
-
-|  -> ZK batch proofs + state diffs (validity)                 |
-
-|  -> Reconstructable from Bitcoin alone                       |│  │  Schnorr Precompile    0x0000...0200  — BIP-340 verify   │││  └──────────────────────────────────────────────────────┘  │
-
-+-------------------------------------------------------------+
-
-```│  └──────────────────────────────────────────────────────────┘││                                              ▼              │
-
-
-
-### Design Principle│                                              ▲               ││                              ┌──────────────────────────┐   │
-
-
-
-**Smart contracts for protocol-critical state and webapp visibility only.** Bitcoin awareness and finality tracking are handled off-chain:│                              Read via eth_call (free, no gas)││                              │ Citrea System Contracts   │   │
-
-
-
-| Layer | Approach |│                              by off-chain scripts & webapp   ││                              │ Bitcoin Light Client      │   │
-
-|-------|----------|
-
-| **Protocol state** (institutions, processes, steps, registry) | On-chain contracts -- source of truth for webapp |└─────────────────────┬───────────────────────────────────────┘│                              │ Bridge (Clementine/BitVM2)│   │
-
-| **Bitcoin block hashes** | Direct `eth_call` to Light Client `0x3100...0001` -- free, no wrapper needed |
-
-| **Finality tracking** (committed / ZK-proven) | Off-chain monitor polling Citrea RPCs |                      │ Citrea rollup pipeline (automatic)│                              └──────────────────────────┘   │
-
-| **Bridge awareness** (deposits, withdrawals) | Off-chain indexing of Bridge events at `0x3100...0002` |
-
-                      ▼└─────────────────────┬───────────────────────────────────────┘
-
-## Contracts
-
-┌─────────────────────────────────────────────────────────────┐                      │ ZK Batch Proofs inscribed on Bitcoin
+## Contracts (Solidity 0.8.24, Shanghai EVM)
 
 | Contract | Description |
+|----------|-------------|
+| `BINSTDeployer` | Factory/registry — creates institutions and deploys process templates |
+| `Institution` | Institution entity — members, admin, Bitcoin identity (`inscriptionId`, `runeId`) |
+| `ProcessTemplate` | Immutable workflow blueprint with named steps |
+| `ProcessInstance` | Running execution with step-by-step state tracking |
 
-|----------|-------------|│  Bitcoin (Testnet4)                                         │                      ▼
+All contracts are deployed and verified on Citrea Testnet (chain 5115).
 
-| `BINSTDeployer` | Factory/registry -- creates institutions and standalone processes |
+---
 
-| `Institution` | On-chain institution entity -- members, roles, owns process templates |│  → Sequencer commitments (ordering)                         │┌─────────────────────────────────────────────────────────────┐
+## Taproot Reader (Rust workspace)
 
-| `ProcessTemplate` | Immutable blueprint with named steps (adapted from DeBu Studio) |
+A Rust workspace that decodes BINST data directly from Bitcoin:
 
-| `ProcessInstance` | Running execution with step-by-step state tracking |│  → ZK batch proofs + state diffs (validity)                 ││  Bitcoin (Testnet4)                                         │
+| Crate | Description |
+|-------|-------------|
+| `citrea-decoder` | Parses Citrea DA inscriptions (sequencer commitments, batch proofs) from raw tapscript witness |
+| `binst-decoder` | Maps L2 storage slot diffs → BINST entities (`InstitutionState`, `ProcessTemplateState`, etc.) |
+| `binst-inscription` | Parses Ordinals envelopes for `binst` metaprotocol inscriptions; typed entity bodies |
+| `cli` (`citrea-scanner`) | Binary that connects to Bitcoin Core RPC and scans for Citrea DA transactions |
 
+### Bitcoin identity (`BitcoinIdentity` struct)
 
+Every entity carries a `BitcoinIdentity` where the Bitcoin pubkey is the root:
 
-## Off-chain Bitcoin Tooling│  → Reconstructable from Bitcoin alone                       ││  → Sequencer commitments → ZK proofs → Finality             │
+```rust
+pub struct BitcoinIdentity {
+    pub bitcoin_pubkey: [u8; 32],         // ROOT — controls inscription UTXO
+    pub inscription_id: Option<String>,   // permanent identity on Bitcoin
+    pub membership_rune_id: Option<String>, // membership token
+    pub evm_address: Option<[u8; 20]>,    // current L2 delegate (can change)
+    pub derivation_hint: Option<String>,
+}
+```
 
+### JSON schema
 
+The `binst` metaprotocol uses a [JSON Schema](taproot-reader/schema/binst-metaprotocol.json)
+defining four entity types: `institution`, `process_template`, `process_instance`, `step_execution`.
+See [schema/README.md](taproot-reader/schema/README.md) for examples.
 
-| Script | Description |└─────────────────────────────────────────────────────────────┘└─────────────────────────────────────────────────────────────┘
+---
 
+## Scripts
+
+| Script | Description |
 |--------|-------------|
+| `inscribe-binst.ts` | Generate `ord` commands to inscribe BINST entities on Bitcoin testnet4 |
+| `taproot-vault.ts` | Build Taproot leaf scripts for inscription UTXO safety (NUMS + CSV + multisig) |
+| `demo-flow.ts` | End-to-end demo: deploy institution → create process → execute steps |
+| `bitcoin-awareness.ts` | Read Bitcoin Light Client, query finality RPCs |
+| `finality-monitor.ts` | Poll Citrea RPCs until a watched L2 block is committed / ZK-proven |
+| `test-protocol.ts` | Protocol test against live Citrea testnet |
 
-| `scripts/bitcoin-awareness.ts` | Reads Light Client, queries finality RPCs, finds commitments and proofs |``````
-
-| `scripts/finality-monitor.ts` | Polls Citrea RPCs until a watched L2 block is committed / ZK-proven |
-
-
+---
 
 ## Quick Start
 
-### Design Principle## Contracts
-
 ```bash
-
 # Install
-
 npm install
 
-**Smart contracts for protocol-critical state only.** Bitcoin awareness and finality tracking are handled off-chain:| Contract | Description |
+# Compile Solidity (Shanghai EVM)
+npx hardhat compile
 
-# Compile (targets Shanghai EVM -- Citrea requirement)
-
-npx hardhat compile|----------|-------------|
-
-
-
-# Run tests (8 passing)| Layer | Approach || `BINSTDeployer` | Factory/registry — deploys and indexes process templates |
-
+# Run tests (12 Solidity + 16 Rust = 28 total)
 npx hardhat test
+cd taproot-reader && cargo test
 
-|-------|----------|| `ProcessTemplate` | Immutable blueprint with named steps (adapted from DeBu Studio) |
+# Run demo (local Hardhat)
+npx hardhat run scripts/demo-flow.ts
 
-# Run full demo (local) -- Institution -> Process -> Instance flow
+# Deploy to Citrea Testnet
+cp .env.example .env   # add CITREA_PRIVATE_KEY and CITREA_TESTNET_RPC_URL
+npx hardhat run scripts/demo-flow.ts --network citreaTestnet
 
-npx hardhat run scripts/demo-flow.ts| **Protocol state** (processes, steps, registry) | On-chain contracts — source of truth for webapp || `ProcessInstance` | Running execution with step-by-step state tracking |
+# Generate inscription command for testnet4
+npx ts-node scripts/inscribe-binst.ts institution "Acme Financial" <admin_x_only_pubkey>
 
+# Generate Taproot vault scripts
+npx ts-node scripts/taproot-vault.ts <admin_pubkey> <committee_key_A> <committee_key_B> <committee_key_C>
 
-
-# Deploy to Citrea Testnet| **Bitcoin block hashes** | Direct `eth_call` to Light Client `0x3100...0001` — free, no wrapper needed || `BitcoinAnchor` | Reads Citrea's Bitcoin Light Client to anchor process events to BTC |
-
-cp .env.example .env  # Add your private key
-
-npx hardhat run scripts/demo-flow.ts --network citreaTestnet| **Finality tracking** (committed / ZK-proven) | Off-chain monitor polling Citrea RPCs |
-
-
-
-# Bitcoin awareness (no deployment needed)| **Bridge awareness** (deposits, withdrawals) | Off-chain indexing of Bridge events at `0x3100...0002` |## Quick Start
-
+# Bitcoin awareness (reads Citrea Light Client, no deployment needed)
 npx tsx scripts/bitcoin-awareness.ts
 
-
-
 # Monitor finality for a specific L2 block
-
-WATCH_L2=23972426 npx tsx scripts/finality-monitor.ts## Contracts```bash
-
+WATCH_L2=23972426 npx tsx scripts/finality-monitor.ts
 ```
 
-# Install
+---
 
 ## Citrea Testnet Config
 
-| Contract | Description |npm install
-
 | Setting | Value |
-
-|---------|-------||----------|-------------|
-
+|---------|-------|
 | RPC | `https://rpc.testnet.citrea.xyz` |
-
-| Chain ID | `5115` || `BINSTDeployer` | Factory/registry — deploys and indexes process templates |# Compile (targets Shanghai EVM — Citrea requirement)
-
+| Chain ID | `5115` |
 | EVM | Shanghai (no Cancun) |
-
-| Currency | cBTC || `ProcessTemplate` | Immutable blueprint with named steps (adapted from DeBu Studio) |npx hardhat compile
-
+| Currency | cBTC |
 | Faucet | Citrea Discord `#faucet` |
+| Explorer | [`explorer.testnet.citrea.xyz`](https://explorer.testnet.citrea.xyz) |
 
-| Explorer | `https://explorer.testnet.citrea.xyz` || `ProcessInstance` | Running execution with step-by-step state tracking |
-
-
-
-## Bitcoin Anchoring -- How It Works# Run tests
-
-
-
-BINST does **not** deploy a "Bitcoin anchor" contract. Instead, it relies on Citrea's existing infrastructure:## Off-chain Bitcoin Toolingnpx hardhat test
-
-
-
-1. **Every BINST transaction** lives in a specific Citrea L2 block
-
-2. **Citrea's sequencer** batches L2 blocks and inscribes a **Sequencer Commitment** (Merkle root) on Bitcoin -- this pins the ordering
-
-3. **Citrea's batch prover** generates a **ZK proof (Groth16 via RISC Zero)** attesting to correct execution, and inscribes it on Bitcoin with **state diffs**| Script | Description |# Run full demo (local)
-
-4. After step 3, **anyone with a Bitcoin node can reconstruct the entire Citrea state** -- including all BINST data
-
-|--------|-------------|npx hardhat run scripts/demo-flow.ts
-
-**Finality model:**
-
-| `scripts/bitcoin-awareness.ts` | Reads Light Client, queries finality RPCs, finds commitments & proofs |
-
-| Level | What happens | How to verify |
-
-|-------|-------------|---------------|| `scripts/finality-monitor.ts` | Polls Citrea RPCs until a watched L2 block is committed / ZK-proven |# Deploy to Citrea Testnet
-
-| **Soft Confirmation** | Sequencer signs the L2 block | Transaction receipt |
-
-| **Committed** | Sequencer commitment inscribed on Bitcoin | `citrea_getLastCommittedL2Height` RPC |cp .env.example .env  # Add your private key
-
-| **ZK-Proven** | ZK batch proof inscribed on Bitcoin | `citrea_getLastProvenL2Height` RPC |
-
-## Quick Startnpx hardhat run scripts/demo-flow.ts --network citreaTestnet
-
-The off-chain `finality-monitor.ts` script watches these RPCs and reports when your L2 blocks reach each milestone.
-
-```
-
-## Clementine Bridge (BTC <-> cBTC)
-
-```bash
-
-Users interact with BINST using **cBTC** -- BTC that has been trust-minimally bridged via Clementine (BitVM2-based, 1-of-N honesty assumption):
-
-# Install## Citrea Testnet Config
-
-- **Peg-in (BTC -> cBTC):** Send BTC to Taproot deposit address -> Signers move to vault -> Bridge mints cBTC
-
-- **Peg-out (cBTC -> BTC):** Burn cBTC via `safeWithdraw()` -> Operator pays BTC -> Challenge window -> Donenpm install
-
-
-
-cBTC is not a wrapped token -- it is BTC secured by BitVM2's optimistic verification of ZK proofs directly on Bitcoin.| Setting | Value |
-
-
-
-## Tech Stack# Compile (targets Shanghai EVM — Citrea requirement)|---------|-------|
-
-
-
-- **Hardhat 3** with Viem (not ethers)npx hardhat compile| RPC | `https://rpc.testnet.citrea.xyz` |
-
-- **Solidity 0.8.24** targeting Shanghai EVM
-
-- **TypeScript** (ESM)| Chain ID | `5115` |
-
-- **Citrea Testnet** (Bitcoin Testnet4 DA layer)
-
-# Run tests (5 passing)| EVM | Shanghai (no Cancun) |
-
-## Part of BINST
-
-npx hardhat test| Currency | cBTC |
-
-This pilot is part of the [Bitcoin Institutions (BINST)](https://github.com/Bitcoin-Institutions/BINST) protocol -- bringing institutional-grade processes to Bitcoin through ZK rollups and trust-minimized bridges.
-
-| Faucet | Citrea Discord `#faucet` |
-
-# Run full demo (local)| Explorer | `https://explorer.testnet.citrea.xyz` |
-
-npx hardhat run scripts/demo-flow.ts
+---
 
 ## Bitcoin Anchoring
 
-# Deploy to Citrea Testnet
+BINST relies on Citrea's rollup infrastructure to anchor all L2 activity to Bitcoin:
 
-cp .env.example .env  # Add your private keyThe `BitcoinAnchor` contract reads from Citrea's **Bitcoin Light Client** system contract (`0x3100000000000000000000000000000000000001`), which stores Bitcoin block hashes as they're confirmed.
+1. Every BINST transaction lives in a Citrea L2 block
+2. The sequencer inscribes **Sequencer Commitments** (Merkle roots) on Bitcoin — pins ordering
+3. The batch prover inscribes **ZK proofs** (Groth16 via RISC Zero) on Bitcoin with state diffs — proves correctness
+4. Anyone with a Bitcoin node can **reconstruct the entire L2 state** including all BINST data
 
-npx hardhat run scripts/demo-flow.ts --network citreaTestnet
-
-**Finality model:**
-
-# Bitcoin awareness (no deployment needed)1. **Soft Confirmation** — sequencer processes the transaction
-
-npx tsx scripts/bitcoin-awareness.ts2. **Finalized** — sequencer commitment inscribed on Bitcoin
-
-3. **Proven** — ZK batch proof inscribed on Bitcoin (strongest guarantee)
-
-# Monitor finality for a specific L2 block
-
-WATCH_L2=23972426 npx tsx scripts/finality-monitor.tsThis means every process step executed on BINST is provably committed to Bitcoin's immutable ledger.
-
-```
-
-## Tech Stack
-
-## Citrea Testnet Config
-
-- **Hardhat 3** with Viem (not ethers)
-
-| Setting | Value |- **Solidity 0.8.24** targeting Shanghai EVM
-
-|---------|-------|- **TypeScript** (ESM)
-
-| RPC | `https://rpc.testnet.citrea.xyz` |- **Citrea Testnet** (Bitcoin Testnet4 DA layer)
-
-| Chain ID | `5115` |
-
-| EVM | Shanghai (no Cancun) |## Part of BINST
-
-| Currency | cBTC |
-
-| Faucet | Citrea Discord `#faucet` |This pilot is part of the [Bitcoin Institutions (BINST)](https://github.com/Bitcoin-Institutions/BINST) protocol — bringing institutional-grade processes to Bitcoin through ZK rollups and trust-minimized bridges.
-
-| Explorer | `https://explorer.testnet.citrea.xyz` |
-
-## Bitcoin Anchoring — How It Works
-
-BINST does **not** deploy a "Bitcoin anchor" contract. Instead, it relies on Citrea's existing infrastructure:
-
-1. **Every BINST transaction** lives in a specific Citrea L2 block
-2. **Citrea's sequencer** batches L2 blocks and inscribes a **Sequencer Commitment** (Merkle root) on Bitcoin — this pins the ordering
-3. **Citrea's batch prover** generates a **ZK proof (Groth16 via RISC Zero)** attesting to correct execution, and inscribes it on Bitcoin with **state diffs**
-4. After step 3, **anyone with a Bitcoin node can reconstruct the entire Citrea state** — including all BINST data
-
-**Finality model:**
-
-| Level | What happens | How to verify |
-|-------|-------------|---------------|
+| Finality level | What happens | How to verify |
+|----------------|-------------|---------------|
 | **Soft Confirmation** | Sequencer signs the L2 block | Transaction receipt |
-| **Committed** | Sequencer commitment inscribed on Bitcoin | `citrea_getLastCommittedL2Height` RPC |
-| **ZK-Proven** | ZK batch proof inscribed on Bitcoin | `citrea_getLastProvenL2Height` RPC |
+| **Committed** | Sequencer commitment inscribed on Bitcoin | `citrea_getLastCommittedL2Height` |
+| **ZK-Proven** | ZK batch proof inscribed on Bitcoin | `citrea_getLastProvenL2Height` |
 
-The off-chain `finality-monitor.ts` script watches these RPCs and reports when your L2 blocks reach each milestone.
+The `taproot-reader` Rust workspace can decode these inscriptions directly
+from a Bitcoin full node — see [DECODING.md](taproot-reader/DECODING.md).
 
-## Clementine Bridge (BTC ↔ cBTC)
+---
 
-Users interact with BINST using **cBTC** — BTC that has been trust-minimally bridged via Clementine (BitVM2-based, 1-of-N honesty assumption):
+## Documentation
 
-- **Peg-in (BTC → cBTC):** Send BTC to Taproot deposit address → Signers move to vault → Bridge mints cBTC
-- **Peg-out (cBTC → BTC):** Burn cBTC via `safeWithdraw()` → Operator pays BTC → Challenge window → Done
+| Document | Description |
+|----------|-------------|
+| [BITCOIN-IDENTITY.md](taproot-reader/BITCOIN-IDENTITY.md) | Full architecture: authority model, Taproot vault, lock/unlock flows, L2 portability |
+| [conceptual.md](taproot-reader/conceptual.md) | Non-technical overview of the three-layer architecture |
+| [DECODING.md](taproot-reader/DECODING.md) | Technical reference for Citrea DA transaction decoding |
+| [schema/README.md](taproot-reader/schema/README.md) | BINST metaprotocol JSON schema and examples |
 
-cBTC is not a wrapped token — it's BTC secured by BitVM2's optimistic verification of ZK proofs directly on Bitcoin.
+---
 
 ## Tech Stack
 
 - **Hardhat 3** with Viem (not ethers)
 - **Solidity 0.8.24** targeting Shanghai EVM
+- **Rust 1.94** — taproot-reader workspace (4 crates, 16 tests)
 - **TypeScript** (ESM)
-- **Citrea Testnet** (Bitcoin Testnet4 DA layer)
+- **Citrea Testnet** (chain 5115, Bitcoin Testnet4 DA layer)
+- **Bitcoin Core** testnet4 for full-node verification
 
 ## Part of BINST
 
-This pilot is part of the [Bitcoin Institutions (BINST)](https://github.com/Bitcoin-Institutions/BINST) protocol — bringing institutional-grade processes to Bitcoin through ZK rollups and trust-minimized bridges.
+This pilot is part of [Bitcoin Institutions (BINST)](https://github.com/Bitcoin-Institutions/BINST) —
+a protocol for creating transparent, Bitcoin-sovereign institutions where
+the user's Bitcoin key controls everything and L2 smart contracts are
+portable processing delegates.

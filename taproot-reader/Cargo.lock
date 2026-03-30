@@ -94,6 +94,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "binst-inscription"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "hex-literal",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "bitcoin"
 version = "0.32.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

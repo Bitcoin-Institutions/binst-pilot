@@ -1,6 +1,6 @@
 //! # binst-decoder
 //!
-//! Map Citrea DA state diffs to BINST protocol entities.
+//! Map L2 DA state diffs to BINST protocol entities.
 //!
 //! This crate sits above `citrea-decoder` and adds BINST-specific knowledge:
 //!
@@ -9,7 +9,8 @@
 //!
 //! - **Entity types** — `InstitutionState`, `ProcessTemplateState`,
 //!   `ProcessInstanceState`, each carrying an optional `BitcoinIdentity`
-//!   (forward-compatible with Taproot-based institution identity).
+//!   where the Bitcoin pubkey is the root of authority and the L2 EVM
+//!   address is a processing delegate.
 //!
 //! - **State reconstruction** — given a stream of `(contract, slot, value)`
 //!   tuples extracted from batch-proof state diffs, reconstruct the full

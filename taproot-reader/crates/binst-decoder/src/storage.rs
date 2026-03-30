@@ -18,12 +18,14 @@
 //! ## BINST contract layouts (from source inspection)
 //!
 //! ### Institution.sol
-//!   slot 0: name       (string)
-//!   slot 1: admin      (address)
-//!   slot 2: deployer   (address)
-//!   slot 3: members    (address[])        — length at 3, elements at keccak256(3)+i
-//!   slot 4: isMember   (mapping(address => bool))   — keccak256(addr . 4)
-//!   slot 5: processes  (address[])        — length at 5, elements at keccak256(5)+i
+//!   slot 0: name             (string)
+//!   slot 1: admin            (address)
+//!   slot 2: deployer         (address)
+//!   slot 3: inscriptionId    (string)    — Ordinals inscription ID
+//!   slot 4: runeId           (string)    — membership Rune ID
+//!   slot 5: members          (address[]) — length at 5, elements at keccak256(5)+i
+//!   slot 6: isMember         (mapping(address => bool)) — keccak256(addr . 6)
+//!   slot 7: processes        (address[]) — length at 7, elements at keccak256(7)+i
 //!
 //! ### ProcessTemplate.sol
 //!   slot 0: name               (string)
@@ -117,9 +119,11 @@ pub mod institution {
     pub const NAME: u64 = 0;
     pub const ADMIN: u64 = 1;
     pub const DEPLOYER: u64 = 2;
-    pub const MEMBERS_ARRAY: u64 = 3;
-    pub const IS_MEMBER_MAP: u64 = 4;
-    pub const PROCESSES_ARRAY: u64 = 5;
+    pub const INSCRIPTION_ID: u64 = 3;
+    pub const RUNE_ID: u64 = 4;
+    pub const MEMBERS_ARRAY: u64 = 5;
+    pub const IS_MEMBER_MAP: u64 = 6;
+    pub const PROCESSES_ARRAY: u64 = 7;
 }
 
 /// Storage slot assignments for `ProcessTemplate.sol`.
