@@ -4,18 +4,20 @@
 //! identifies Citrea reveal transactions by their wtxid prefix, and decodes
 //! the tapscript inscriptions.
 //!
+//! Alternatively, queries the Citrea L2 RPC directly for batch proofs and
+//! state diffs (--citrea-rpc mode).
+//!
 //! # Usage
 //!
 //! ```bash
-//! # Scan a specific block
+//! # Scan a specific block via Bitcoin Core
 //! citrea-scanner --block 127600
 //!
-//! # Scan a range of blocks
-//! citrea-scanner --from 127590 --to 127610
-//!
-//! # Scan the latest N blocks
-//! citrea-scanner --latest 100
+//! # Scan via Citrea RPC (no local node required)
+//! citrea-scanner --citrea-rpc https://rpc.testnet.citrea.xyz --block 127747
 //! ```
+
+mod citrea_rpc;
 
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use citrea_decoder::{
@@ -69,6 +71,11 @@ struct Args {
     /// Only show transactions of this type (0-4).
     #[arg(long)]
     kind: Option<u16>,
+
+    /// Citrea L2 RPC URL — when set, queries batch proofs via RPC instead of
+    /// scanning Bitcoin blocks. No local Bitcoin Core node required.
+    #[arg(long)]
+    citrea_rpc: Option<String>,
 
     /// BINST deployer contract address (hex, 0x-prefixed).
     /// When set, state diffs are matched against BINST slots.
@@ -452,9 +459,15 @@ fn print_json(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let registry = build_registry(&args);
+
+    if let Some(ref citrea_url) = args.citrea_rpc {
+        return run_rpc_mode(citrea_url, &args, registry.as_ref());
+    }
+
+    // ── Bitcoin Core scanning mode ──
     let auth = get_auth(&args);
     let client = Client::new(&args.rpc_url, auth)?;
-    let registry = build_registry(&args);
 
     // Verify connection
     let info = client.get_blockchain_info()?;
@@ -488,4 +501,220 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Found {total_found} Citrea inscription(s)");
     Ok(())
+}
+
+// ── Citrea RPC mode ─────────────────────────────────────────────
+
+/// Query batch proofs from the Citrea L2 RPC instead of scanning Bitcoin blocks.
+fn run_rpc_mode(
+    citrea_url: &str,
+    args: &Args,
+    registry: Option<&BinstRegistry>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = citrea_rpc::CitreaClient::new(citrea_url);
+
+    // Show proven height
+    match client.get_last_proven_height() {
+        Ok(h) => eprintln!(
+            "Citrea last proven L2 height: {} (commitment index {})",
+            h.height, h.commitment_index
+        ),
+        Err(e) => eprintln!("Warning: could not get proven height: {e}"),
+    }
+
+    // Determine block range
+    let (from, to) = if let Some(block) = args.block {
+        (block, block)
+    } else if let Some(latest) = args.latest {
+        // We can't know the Bitcoin tip from the Citrea RPC easily,
+        // so require --block or --from/--to in RPC mode.
+        return Err(format!(
+            "--latest requires Bitcoin Core; use --block or --from/--to in RPC mode \
+             (latest={latest})"
+        )
+        .into());
+    } else {
+        let from = args.from.ok_or("--block or --from required in RPC mode")?;
+        let to = args.to.unwrap_or(from);
+        (from, to)
+    };
+
+    eprintln!(
+        "Querying Citrea RPC for BTC blocks {from}..={to} ({} blocks)",
+        to - from + 1
+    );
+    eprintln!();
+
+    let mut total_proofs = 0u64;
+    let mut total_entries = 0usize;
+
+    for btc_height in from..=to {
+        match client.get_verified_batch_proofs(btc_height) {
+            Ok(proofs) if proofs.is_empty() => {
+                if args.format != "json" {
+                    eprintln!("Block {btc_height}: no verified batch proofs");
+                }
+            }
+            Ok(proofs) => {
+                total_proofs += proofs.len() as u64;
+                for (proof_idx, proof) in proofs.iter().enumerate() {
+                    let state_diff =
+                        citrea_rpc::state_diff_from_rpc(&proof.proof_output.state_diff);
+                    total_entries += state_diff.len();
+
+                    if args.format == "json" {
+                        print_rpc_json(btc_height, proof_idx, proof, &state_diff, registry);
+                    } else {
+                        print_rpc_text(btc_height, proof_idx, proof, &state_diff, registry);
+                    }
+                }
+            }
+            Err(e) => eprintln!("Error querying block {btc_height}: {e}"),
+        }
+    }
+
+    eprintln!(
+        "Total: {total_proofs} batch proof(s), {total_entries} state diff entries"
+    );
+    Ok(())
+}
+
+fn print_rpc_text(
+    btc_height: u64,
+    proof_idx: usize,
+    proof: &citrea_rpc::RpcBatchProof,
+    state_diff: &[(Vec<u8>, Option<Vec<u8>>)],
+    registry: Option<&BinstRegistry>,
+) {
+    let out = &proof.proof_output;
+    println!(
+        "BTC block {btc_height} proof[{proof_idx}] — {} state roots, {} state diff entries",
+        out.state_roots.len(),
+        state_diff.len(),
+    );
+    println!("  final_l2_hash: {}", out.final_l2_block_hash);
+
+    // JMT summary
+    let summary = jmt::summarize_diff(state_diff);
+    println!(
+        "  JMT: {} storage, {} headers, {} accounts, {} idx, {} other",
+        summary.evm_storage,
+        summary.evm_header,
+        summary.evm_account,
+        summary.evm_account_idx,
+        summary.other,
+    );
+
+    // State diff sample (first 10)
+    if !state_diff.is_empty() {
+        println!("  ── State Diff (first 10) ──");
+        for (i, (key, value)) in state_diff.iter().take(10).enumerate() {
+            let val_str = match value {
+                Some(v) => format!("{} bytes", v.len()),
+                None => "DELETED".to_string(),
+            };
+            println!(
+                "  [{i}] key={} ({} bytes) → {val_str}",
+                hex::encode(&key[..std::cmp::min(8, key.len())]),
+                key.len()
+            );
+        }
+        if state_diff.len() > 10 {
+            println!("  ... and {} more entries", state_diff.len() - 10);
+        }
+    }
+
+    // BINST matching
+    if let Some(reg) = registry {
+        let changes = diff::map_state_diff(reg, state_diff);
+        if changes.is_empty() {
+            println!("  BINST: no matching slot changes");
+        } else {
+            println!("  ── BINST Changes ({}) ──", changes.len());
+            for ch in &changes {
+                let addr_str = ch
+                    .contract_address
+                    .map(|a| format!("0x{}", hex::encode(a)))
+                    .unwrap_or_default();
+                let val_preview = ch
+                    .raw_value
+                    .as_deref()
+                    .map(|v| {
+                        if v.len() > 16 {
+                            format!("{}…", &v[..16])
+                        } else {
+                            v.to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| "DELETED".into());
+                println!(
+                    "    {} {} → {} = {}",
+                    ch.contract, addr_str, ch.field, val_preview
+                );
+            }
+        }
+    }
+
+    println!();
+}
+
+fn print_rpc_json(
+    btc_height: u64,
+    proof_idx: usize,
+    proof: &citrea_rpc::RpcBatchProof,
+    state_diff: &[(Vec<u8>, Option<Vec<u8>>)],
+    registry: Option<&BinstRegistry>,
+) {
+    let out = &proof.proof_output;
+    let summary = jmt::summarize_diff(state_diff);
+
+    let mut obj = serde_json::json!({
+        "btc_block": btc_height,
+        "proof_index": proof_idx,
+        "source": "citrea_rpc",
+        "state_roots_count": out.state_roots.len(),
+        "state_diff_entries": state_diff.len(),
+        "final_l2_block_hash": out.final_l2_block_hash,
+        "jmt_summary": {
+            "evm_storage": summary.evm_storage,
+            "evm_header": summary.evm_header,
+            "evm_account": summary.evm_account,
+            "evm_account_idx": summary.evm_account_idx,
+            "other": summary.other,
+        },
+    });
+
+    // State diff sample
+    let sample: Vec<serde_json::Value> = state_diff
+        .iter()
+        .take(20)
+        .map(|(key, value)| {
+            serde_json::json!({
+                "key": hex::encode(key),
+                "value": value.as_ref().map(hex::encode),
+            })
+        })
+        .collect();
+    obj["state_diff_sample"] = serde_json::json!(sample);
+
+    // BINST matching
+    if let Some(reg) = registry {
+        let changes = diff::map_state_diff(reg, state_diff);
+        if !changes.is_empty() {
+            let binst_changes: Vec<serde_json::Value> = changes
+                .iter()
+                .map(|ch| {
+                    serde_json::json!({
+                        "contract": format!("{}", ch.contract),
+                        "address": ch.contract_address.map(|a| format!("0x{}", hex::encode(a))),
+                        "field": format!("{}", ch.field),
+                        "raw_value": ch.raw_value,
+                    })
+                })
+                .collect();
+            obj["binst_changes"] = serde_json::json!(binst_changes);
+        }
+    }
+
+    println!("{}", serde_json::to_string_pretty(&obj).unwrap());
 }
