@@ -276,6 +276,50 @@ describe("BINST Pilot", function () {
       assert.equal(await inst.read.inscriptionId(), testInscriptionId);
     });
 
+    it("Should set and read btcPubkey", async function () {
+      const binstDeployer = await connection.viem.deployContract("BINSTDeployer");
+
+      const txHash = await binstDeployer.write.createInstitution(["BtcPubkey Test"]);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const institutions = await binstDeployer.read.getInstitutions();
+      const inst = await connection.viem.getContractAt("Institution", institutions[0]);
+
+      // Initially zero
+      const zeroPubkey = "0x0000000000000000000000000000000000000000000000000000000000000000";
+      assert.equal(await inst.read.btcPubkey(), zeroPubkey);
+
+      // Set btcPubkey (a 32-byte x-only BIP-340 pubkey)
+      const testPubkey = "0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+      const setTx = await inst.write.setBtcPubkey([testPubkey]);
+      await publicClient.waitForTransactionReceipt({ hash: setTx });
+
+      assert.equal(await inst.read.btcPubkey(), testPubkey);
+    });
+
+    it("Should not allow setting btcPubkey twice", async function () {
+      const binstDeployer = await connection.viem.deployContract("BINSTDeployer");
+
+      const txHash = await binstDeployer.write.createInstitution(["Immutable Pubkey Test"]);
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const institutions = await binstDeployer.read.getInstitutions();
+      const inst = await connection.viem.getContractAt("Institution", institutions[0]);
+
+      // Set once — should succeed
+      const testPubkey = "0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+      const setTx = await inst.write.setBtcPubkey([testPubkey]);
+      await publicClient.waitForTransactionReceipt({ hash: setTx });
+
+      // Set again — should revert
+      const otherPubkey = "0xc6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+      await assert.rejects(
+        async () => {
+          await inst.write.setBtcPubkey([otherPubkey]);
+        },
+      );
+    });
+
     it("Should set and read rune ID", async function () {
       const binstDeployer = await connection.viem.deployContract("BINSTDeployer");
 

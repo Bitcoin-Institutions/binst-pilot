@@ -46,6 +46,12 @@ contract Institution {
     ///         Set after etching the membership Rune on Bitcoin L1.
     string public runeId;
 
+    /// @notice 32-byte x-only public key (BIP-340) of the admin's Bitcoin key.
+    ///         Closes the trust gap: anyone can read this value and compare it
+    ///         to the inscription UTXO owner on Bitcoin L1 — no oracle needed.
+    ///         Set once by the admin; immutable after binding.
+    bytes32 public btcPubkey;
+
     address[] public members;
     mapping(address => bool) public isMember;
     
@@ -57,6 +63,7 @@ contract Institution {
     event AdminTransferred(address indexed oldAdmin, address indexed newAdmin);
     event InscriptionIdSet(string inscriptionId);
     event RuneIdSet(string runeId);
+    event BtcPubkeySet(bytes32 btcPubkey);
 
     modifier onlyAdmin() {
         require(msg.sender == admin, "Only admin");
@@ -182,6 +189,20 @@ contract Institution {
         require(bytes(_runeId).length > 0, "Empty rune ID");
         runeId = _runeId;
         emit RuneIdSet(_runeId);
+    }
+
+    /**
+     * @notice Bind this institution to the admin's Bitcoin public key.
+     *         Stores the 32-byte x-only pubkey (BIP-340). Can only be set once.
+     *         Once set, anyone can compare this value to the inscription UTXO
+     *         owner on Bitcoin L1 — verifiable binding with no oracle.
+     * @param _btcPubkey The 32-byte x-only public key
+     */
+    function setBtcPubkey(bytes32 _btcPubkey) external onlyAdmin {
+        require(btcPubkey == bytes32(0), "BTC pubkey already set");
+        require(_btcPubkey != bytes32(0), "Zero pubkey");
+        btcPubkey = _btcPubkey;
+        emit BtcPubkeySet(_btcPubkey);
     }
 
     // ── Views (free reads for webapp) ────────────────────────────

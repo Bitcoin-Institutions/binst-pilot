@@ -80,6 +80,11 @@
           "type": "string",
           "format": "uri",
           "description": "Optional institution website URL."
+        },
+        "created": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional creation timestamp (Unix epoch seconds)."
         }
       },
       "additionalProperties": false

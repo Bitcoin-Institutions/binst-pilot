@@ -49,6 +49,9 @@ L2 — currently Citrea (PROCESSING DELEGATE)
 │                                                             │
 │  Contract is BOUND TO inscription ID.                       │
 │  User can redeploy to any L2 — identity stays on Bitcoin.   │
+│                                                             │
+│  Cross-chain: LayerZero V2 mirrors identity to other L2s.   │
+│  Execution state verified trustlessly via Bitcoin DA proofs. │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,6 +64,7 @@ The Bitcoin private key controls everything:
 | **Inscription UTXO** | Identity, metadata, provenance | No — this IS the identity |
 | **Rune distribution** | Membership tokens | No — lives on Bitcoin L1 |
 | **L2 contract** | Processing logic (workflows, payments) | **Yes** — redeploy to any L2 |
+| **Mirror contracts** | Read-only identity/membership on other L2s | **Yes** — add/remove mirrors |
 
 Losing the L2 is graceful (redeploy elsewhere). Losing the Bitcoin key is
 catastrophic (committee multi-sig recovery required).

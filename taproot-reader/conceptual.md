@@ -169,23 +169,23 @@ level — confirming that computations were correct via ZK proofs.
 ## The `BitcoinIdentity` type
 
 Every BINST entity in the decoder carries a `BitcoinIdentity` — a struct
-that links the entity across all four reachability layers:
+that links the entity across all reachability layers:
 
 ```
 BitcoinIdentity {
-    evm_address:         [u8; 20]        ← Citrea contract address (always available)
-    bitcoin_pubkey:      Option<[u8;32]> ← Taproot x-only key (controls the inscription)
+    bitcoin_pubkey:      [u8; 32]        ← Taproot x-only key — ROOT OF AUTHORITY
     inscription_id:      Option<String>  ← Ordinals ID (e.g., "abc123...i0")
     membership_rune_id:  Option<String>  ← Rune ID (e.g., "840000:20")
+    evm_address:         Option<[u8;20]> ← L2 contract address (delegate, can change)
     derivation_hint:     Option<String>  ← HD wallet path (e.g. m/86'/0'/0'/0/0)
 }
 ```
 
-This gives every entity four ways to be reached:
-1. `evm_address` — find it on Citrea
-2. `bitcoin_pubkey` — verify the controller's Bitcoin key
-3. `inscription_id` — look it up on any Ordinals explorer
-4. `membership_rune_id` — check membership in any Rune wallet
+The ordering reflects the authority hierarchy:
+1. `bitcoin_pubkey` — the root of authority (controls the inscription UTXO) — **required**
+2. `inscription_id` — the entity's permanent identity on Bitcoin
+3. `membership_rune_id` — membership token on Bitcoin
+4. `evm_address` — the current L2 processing delegate (**optional** — can change if L2 changes)
 
 ---
 
@@ -236,9 +236,14 @@ A Bitcoin maximalist can:
 - Verify the institution's entire computational history with a full node ✓
 - Never touch any specific L2 directly if they don't want to ✓
 - Move their institution to a different L2 without losing identity ✓
+- Have their institution **visible on multiple L2s simultaneously** via
+  LayerZero V2 mirrors (identity/membership) and Bitcoin DA (execution proofs) ✓
 
 The L2 is a processing delegate, not the owner. The user's Bitcoin key
-controls everything.
+controls everything. Cross-chain presence uses two sync channels:
+**LayerZero V2** for real-time identity sync, **Bitcoin DA** for trustless
+execution verification. Process instances have a single home chain —
+mirrors are read-only to prevent concurrent mutation conflicts.
 
 ### Crate architecture
 

@@ -509,6 +509,122 @@ sequencer commitments.
 
 ---
 
+## Institution anchoring lifecycle
+
+An institution progresses through three anchoring states:
+
+```
+State 1: UNANCHORED (L2-only)
+  → Contract deployed on Citrea (or any L2)
+  → Functional on L2: members, processes work
+  → Batch proofs reach Bitcoin DA (orphan proofs — see below)
+  → No inscription, no rune
+  → Status: DRAFT
+
+State 2: BINDING (partially anchored)
+  → Contract deployed + inscription created
+  → But not yet fully linked (setInscriptionId not called,
+    or rune not yet etched)
+  → Status: BINDING
+
+State 3: ANCHORED (fully sovereign)
+  → Contract deployed + inscription bound + rune etched + rune bound
+  → L2 state is provably linked to Bitcoin identity
+  → Status: ANCHORED
+```
+
+**Anchoring is not deployment.** An institution exists on the L2 from
+the moment its contract is deployed. It becomes *Bitcoin-anchored* when
+its Ordinals inscription is created and bound to the contract. Unanchored
+institutions are functional but not verifiable from Bitcoin L1.
+
+### Orphan ZK proofs
+
+If a user deploys `Institution.sol` on Citrea but never inscribes the
+ordinal identity, the ZK batch proof still reaches Bitcoin DA. This is
+an **orphan proof** — valid (it proves the L2 state transition happened)
+but unanchored (no Bitcoin-native identity to attach it to).
+
+The `binst-decoder` would see storage slot changes for an Institution
+contract, but `inscriptionId` and `runeId` would be empty strings.
+
+Orphan proofs are **not harmful** — they are noise the indexer filters
+with a simple check: `if inscriptionId == "" → skip`. This is by design:
+
+- Lowers the barrier to entry — users can experiment on L2 for just gas
+- Creates a natural funnel: experiment → anchor → grow
+- Citrea batches state regardless; you cannot prevent orphan proofs
+  without gatekeeping contract deployment
+
+---
+
+## Read/write phase model
+
+### Write phases (user-initiated transactions)
+
+```
+┌──────────────┬──────────────────┬───────────────────────┐
+│ Action       │ Where            │ Who pays / signs      │
+├──────────────┼──────────────────┼───────────────────────┤
+│ Inscribe ID  │ Bitcoin (ordinal)│ User, BTC wallet      │
+│ Mint Rune    │ Bitcoin (rune)   │ User, BTC wallet      │
+│ Deploy Inst. │ Citrea (EVM)     │ User, EVM wallet      │
+│ Bind IDs     │ Citrea (EVM)     │ User, EVM wallet      │
+│ Add Member   │ Citrea (EVM)     │ Admin, EVM wallet     │
+│ Send Rune    │ Bitcoin (rune)   │ Admin, BTC wallet     │
+│ Create Proc  │ Citrea (EVM)     │ Admin, EVM wallet     │
+│ Execute Step │ Citrea (EVM)     │ Member, EVM wallet    │
+└──────────────┴──────────────────┴───────────────────────┘
+```
+
+### Automatic (no user action)
+
+```
+┌──────────────┬──────────────────┬───────────────────────┐
+│ Batch proof  │ Bitcoin DA       │ Citrea sequencer      │
+│ (ZK rollup)  │                  │ (periodic, async)     │
+└──────────────┴──────────────────┴───────────────────────┘
+```
+
+### Read phases (free, no transaction)
+
+```
+┌──────────────┬──────────────────┬───────────────────────┐
+│ Verify member│ Citrea (EVM)     │ Free (view call)      │
+│ Check process│ Citrea (EVM)     │ Free (view call)      │
+│ Verify inscr.│ Bitcoin (ord)    │ Free (indexer query)  │
+│ Verify proof │ Bitcoin DA       │ Free (decode batch)   │
+│ Cross-chain  │ LayerZero/DA     │ Relay fee or free     │
+└──────────────┴──────────────────┴───────────────────────┘
+```
+
+**Key insight:** the user does NOT create a Bitcoin transaction when they
+deploy on Citrea. Citrea's batch proof reaches Bitcoin automatically,
+asynchronously — the user doesn't trigger it or pay for it. It's the
+sequencer's job. The inscription (ordinal) is a separate, deliberate
+Bitcoin transaction that the user initiates to create the identity anchor.
+
+### Wallet UX (current vs future)
+
+**Today (Phase 1-3):** Two wallets. Bitcoin wallet (Xverse, Unisat) for
+inscriptions and runes. EVM wallet (MetaMask) for L2 transactions. The
+Schnorr precompile on Citrea (`0x5a`) means contracts *can verify* Bitcoin
+signatures, but the webapp flow requires both wallets.
+
+**Future (Phase 4+):** Single Bitcoin wallet. Account abstraction or
+Schnorr-verified sessions allow the user to sign once with their Bitcoin
+key, and an AA layer submits to the L2. One wallet, one identity.
+
+### Entity creation vs event registration
+
+| Pattern | Bitcoin TX needed? | Example |
+|---|---|---|
+| **Entity creation** | Yes (inscription/rune) + L2 tx | Create institution, etch rune |
+| **Event registration** | L2 tx only (batch proof automatic) | Execute step, add member |
+| **Verification** | No (read only) | Check membership, verify proof |
+
+---
+
 ## Protocol flows
 
 ### Creating an institution
@@ -543,6 +659,10 @@ sequencer commitments.
 Note: step 4 can be repeated on any L2. The inscription ID and Rune ID
 stay the same. Only the L2 contract address changes.
 
+Note: steps 2-3 (Bitcoin) and step 4 (L2) are independent — they can
+happen in any order. If step 4 happens first without steps 2-3, the
+institution is UNANCHORED (see "Institution anchoring lifecycle" above).
+
 ### Switching L2s
 
 ```
@@ -562,6 +682,61 @@ stay the same. Only the L2 contract address changes.
 5. New operations flow through the new L2 contract
    → the institution continues seamlessly
 ```
+
+### Cross-chain state synchronization
+
+BINST institutions can be **omnipresent across multiple L2s** simultaneously,
+not just portable between them. This uses a dual-channel sync model:
+
+```
+Bitcoin (inscription + rune) = AUTHORITY
+    ↓
+Home L2 (e.g., Citrea) = PRIMARY DELEGATE (read + write)
+    ↓ LayerZero V2 (identity)     ↓ Bitcoin DA (execution proof)
+Mirror L2s (BOB, Rootstock, etc.) = READ-ONLY MIRRORS
+```
+
+**Two sync channels, each for what it's good at:**
+
+| Channel | What it syncs | Speed | Trust model |
+|---|---|---|---|
+| **LayerZero V2** | Identity: name, admin, members, inscriptionId, runeId | Fast (real-time) | DVN-configurable |
+| **Bitcoin DA** | Execution: process step states, completion proofs | Slow (batch interval) | Trustless (ZK-proven) |
+
+LayerZero V2 has deployed endpoints on Citrea mainnet (Chain ID 4114,
+Endpoint ID 30403) and 8+ Bitcoin L2s (BOB, Bitlayer, BEVM, Merlin,
+Rootstock, Hemi, Corn, Goat).
+
+**The three state tiers:**
+
+| Tier | Data | Sync method | Writable? |
+|---|---|---|---|
+| **Identity** | inscriptionId, runeId, admin, name | LayerZero (fast) | Home chain only |
+| **Membership** | members[], isMember | LayerZero (fast) | Home chain only |
+| **Execution** | stepStates[], process progress | Bitcoin DA (trustless) | Home chain only |
+
+**Critical rule: single-writer per ProcessInstance.** A ProcessInstance
+lives on exactly one home chain. It is created there, executed there,
+completed there. Mirror chains can *read* process state (via Bitcoin DA
+batch proofs) but cannot *mutate* it. This prevents concurrent execution
+conflicts — two L2s cannot execute the same step simultaneously because
+only the home chain has write access.
+
+Mirror contracts (`InstitutionMirror.sol`) expose read-only functions:
+`isMember()`, `getAdmin()`, `getInscriptionId()` — no `executeStep()`,
+no `createProcess()`. The type system enforces the invariant.
+
+**Cross-chain process references:** If a process on BOB needs to verify
+a step completed on Citrea (e.g., "KYC must be done before this audit"),
+it performs a cross-chain read — querying the Citrea mirror or verifying
+the step state from Bitcoin DA. No mutation, no conflict.
+
+**Trust considerations:** LayerZero introduces a dependency outside Bitcoin
+(messages go through DVNs, not Bitcoin DA). This is acceptable because:
+- The **authority** remains on Bitcoin (inscription UTXO)
+- Mirrors are **convenience, not consensus** — any L2 can independently
+  verify the inscription on Bitcoin
+- If LayerZero goes down, institutions still function on their home L2
 
 ### Adding a member
 
@@ -689,9 +864,12 @@ The ordering reflects the authority hierarchy:
 | Who are all members? | Rune indexer query | ❌ No |
 | What processes exist? | Child inscriptions | ❌ No |
 | What step is instance Y on? | L2 RPC (currently Citrea) | ❌ No |
+| Is institution X anchored? | L2 view call (inscriptionId != "") | ❌ No |
 | Was step execution valid? | ZK batch proof decode | ✅ Yes |
 | Full trustless verification? | taproot-reader | ✅ Yes |
 | Which L2 is currently processing? | Inscription metadata or re-inscription | ❌ No |
+| Is this person a member? (cross-chain) | InstitutionMirror on any L2 | ❌ No |
+| Did step X complete? (cross-chain) | Bitcoin DA batch proof decode | ✅ Yes |
 
 **Basic discovery requires no custom software and no full node.** Standard
 Ordinals and Rune tooling covers identity, ownership, membership, and
@@ -729,27 +907,34 @@ but remain reasonable for institutional operations that happen infrequently.
 - Update taproot-reader to find `binst` metaprotocol inscriptions
 - Update `BitcoinIdentity` struct with `inscription_id`
 
-### Phase 2: Bitcoin-key sovereignty
-- Refactor `BitcoinIdentity` struct: `bitcoin_pubkey` becomes required (root),
+### Phase 2: Bitcoin-key sovereignty 🔧 (in progress)
+- ✅ Refactor `BitcoinIdentity` struct: `bitcoin_pubkey` becomes required (root),
   `evm_address` becomes optional (L2 delegate reference)
-- Add `btcPubkey` field to `Institution.sol` — the L2 contract stores the
+- ⬜ Add `btcPubkey` field to `Institution.sol` — the L2 contract stores the
   Bitcoin key it is bound to, making the delegation explicit
-- Explore BTC key → EVM address derivation for trustless binding
-- Document L2 portability: how to migrate from one L2 to another while
+- ⬜ Explore BTC key → EVM address derivation for trustless binding
+- ✅ Document L2 portability: how to migrate from one L2 to another while
   keeping the same inscription and Rune identity
 
-### Phase 3: Membership Runes
+### Phase 3: Membership Runes & Cross-Chain Sync
 - Etch a test Rune per institution on testnet4
 - Add `rune_id` field to Institution.sol
 - Script to mint and distribute membership Runes
 - Update `BitcoinIdentity` struct with `membership_rune_id`
 - Explore Clementine bridge for Rune balance verification on L2
+- **Cross-chain sync via LayerZero V2** (Citrea endpoint live: chain 4114,
+  endpoint ID 30403): `BINSTRelay.sol` OApp broadcasts identity/membership
+  state to mirror chains; `InstitutionMirror.sol` provides read-only
+  verification on other L2s (BOB, Rootstock, etc.)
+- Batch Bitcoin-side operations (inscribe + etch in fewer transactions)
 
 ### Phase 4: Bitcoin-native discovery
 - Indexer that watches for `binst` metaprotocol inscriptions
 - API: "list all BINST institutions" → Ordinals query for `metaprotocol=binst`
 - API: "list members of institution X" → Rune balance query for `X•MEMBER`
 - API: "verify institution state" → cross-reference inscription, Rune, batch proof
+- Cross-chain process state verification via Bitcoin DA batch proof reads
+- Single-wallet UX: Schnorr-verified sessions via account abstraction
 
 ### Phase 5: Deep Bitcoin integration
 - **Covenant-upgraded vault** (when OP_CTV/OP_CAT activates): inscription
@@ -758,6 +943,7 @@ but remain reasonable for institutional operations that happen infrequently.
 - Cross-institution process verification using inscription provenance chains
 - Rune-gated access control (hold ≥1 `X•MEMBER` to interact)
 - BTC key signature verification on L2 (trustless delegation proof)
+- BitVM verification of cross-chain state consistency
 
 ---
 

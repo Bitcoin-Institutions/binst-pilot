@@ -12,7 +12,7 @@ export default defineConfig({
           evmVersion: "shanghai",
           optimizer: {
             enabled: true,
-            runs: 200,
+            runs: 50,
           },
         },
       },
@@ -22,7 +22,7 @@ export default defineConfig({
           evmVersion: "shanghai",
           optimizer: {
             enabled: true,
-            runs: 200,
+            runs: 50,
           },
         },
       },

@@ -1,0 +1,13 @@
+{
+  "v": 0,
+  "type": "institution",
+  "name": "BINST Pilot Institution",
+  "admin": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "citrea_contract": "0x46c505d38e9009a16398f268e26dff6844ef59d5",
+  "description": "First BINST institution inscribed on Bitcoin testnet4.",
+  "inscription_id": "9fc9870038becdae3b9a654ccdfcea9b90108cd098c06098fd34f5af55247511i0",
+  "commit_tx": "53368414e67020ca5698b05ecd87e52470ba75072e85931dd1d4445258e29c02",
+  "reveal_tx": "9fc9870038becdae3b9a654ccdfcea9b90108cd098c06098fd34f5af55247511",
+  "network": "testnet4",
+  "fees_sats": 3470
+}

@@ -103,15 +103,22 @@ function generateOrdCommand(
   fs.writeFileSync(bodyFile, JSON.stringify(body, null, 2));
 
   // Build ord command
+  // Note: ord infers content-type from file extension (.json → application/json)
   const parts = [
     "ord",
     "--testnet4",
+    "--bitcoin-rpc-username=testnet4rpc",
+    "--bitcoin-rpc-password=AgsJ324J_qqNWgy0Zb7TxemDGLKFdSje",
+    "--bitcoin-rpc-url=http://127.0.0.1:48332",
     "wallet",
+    "--no-sync",
+    "--server-url", "http://localhost:8080",
     "inscribe",
     "--fee-rate", "10",                              // sat/vB
+    "--postage", "546sat",                           // dust-limit UTXO (sat isolation)
     "--metaprotocol", "binst",                       // tag 7
-    "--content-type", "application/json",             // tag 1
-    "--file", bodyFile,                               // body content
+    "--no-backup",                                   // skip recovery key backup
+    "--file", bodyFile,                               // body content (content-type auto-detected)
   ];
 
   if (parentInscriptionId) {
@@ -172,12 +179,15 @@ function main() {
       console.log("• After inscribing, call setInscriptionId() on the Citrea contract");
       console.log("  with the returned inscription ID.");
       if (destination) {
-        console.log(`• Inscription will be sent to vault: ${destination}`);
+        console.log(`• Inscription UTXO: 546 sats → vault ${destination}`);
+        console.log("  The inscribed sat is isolated on a dust-limit UTXO (sat isolation).");
         console.log("  Admin can unlock via Leaf 0 (CSV delay) after ~144 blocks.");
-        console.log("  Committee can unlock via Leaf 1 (2-of-3 multisig) immediately.");
+        console.log("  Committee can unlock via Leaf 1 (2-of-3 OP_CHECKSIGADD) immediately.");
       } else {
-        console.log("• TIP: Use --destination <vault_address> to lock the inscription");
-        console.log("  in a Taproot vault. Generate a vault address with taproot-vault.ts.");
+        console.log("⚠  WARNING: No --destination specified. The inscription will go to");
+        console.log("  the ord wallet's default address (NOT a vault). Use --destination");
+        console.log("  <vault_address> to lock the inscription. Generate a vault address");
+        console.log("  with: npx tsx scripts/taproot-vault.ts <admin_pubkey> <keyA> <keyB> <keyC>");
       }
       break;
     }

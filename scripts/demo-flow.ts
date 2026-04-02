@@ -7,11 +7,12 @@ import { parseAbi } from "viem";
  * This script demonstrates the full BINST lifecycle:
  * 1. Deploys BINSTDeployer (protocol entry-point)
  * 2. Creates an Institution (the "I" in BINST)
- * 3. Adds members to the institution
- * 4. Creates a "KYC Verification" process template through the institution
- * 5. Instantiates and executes the process step by step
- * 6. Queries Citrea's Bitcoin Light Client directly (no wrapper contract)
- * 7. Queries Citrea's finality RPCs to show Bitcoin anchoring status
+ * 3. Binds Bitcoin identity (btcPubkey, inscriptionId, runeId, vault address)
+ * 4. Adds members to the institution
+ * 5. Creates a "KYC Verification" process template through the institution
+ * 6. Instantiates and executes the process step by step
+ * 7. Queries Citrea's Bitcoin Light Client directly (no wrapper contract)
+ * 8. Queries Citrea's finality RPCs to show Bitcoin anchoring status
  *
  * Architecture:
  *   Smart contracts → protocol-critical state + webapp visibility
@@ -64,7 +65,38 @@ async function main() {
   console.log(`    Admin: ${await institution.read.admin()}`);
   console.log("");
 
-  // ── Step 3: Add members to the institution ─────────────────────
+  // ── Step 3: Bind Bitcoin identity ──────────────────────────────
+  // In production these values come from real Bitcoin operations:
+  //   btcPubkey    → admin's x-only Taproot key (from wallet)
+  //   inscriptionId → returned by `ord wallet inscribe`
+  //   runeId        → returned by `ord wallet etch`
+  // Here we use realistic demo values.
+
+  const demoBtcPubkey = "0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798" as `0x${string}`;
+  const demoInscriptionId = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2i0";
+  const demoRuneId = "128195:42";
+
+  console.log("▸ Binding Bitcoin identity to institution...");
+
+  const pubkeyTx = await institution.write.setBtcPubkey([demoBtcPubkey]);
+  await publicClient.waitForTransactionReceipt({ hash: pubkeyTx });
+  console.log(`  ✓ btcPubkey set: ${demoBtcPubkey}`);
+
+  const inscTx = await institution.write.setInscriptionId([demoInscriptionId]);
+  await publicClient.waitForTransactionReceipt({ hash: inscTx });
+  console.log(`  ✓ inscriptionId set: ${demoInscriptionId}`);
+
+  const runeTx = await institution.write.setRuneId([demoRuneId]);
+  await publicClient.waitForTransactionReceipt({ hash: runeTx });
+  console.log(`  ✓ runeId set: ${demoRuneId}`);
+
+  // Show the vault address this institution would use
+  const vaultAddress = "tb1p7p7fnwm58lvt7du6pv9duk7g7xgjldk2w0rmglu92exkja0d6aasphqrv7";
+  console.log(`  ✓ Taproot vault: ${vaultAddress}`);
+  console.log("    (inscription UTXO locked by NUMS + admin CSV + committee multisig)");
+  console.log("");
+
+  // ── Step 4: Add members to the institution ─────────────────────
   console.log("▸ Adding compliance officer as member...");
   const complianceOfficer = "0x0000000000000000000000000000000000000042";
   const memberTx = await institution.write.addMember([complianceOfficer]);
@@ -217,6 +249,10 @@ async function main() {
   console.log(`  BINSTDeployer:   ${binstDeployer.address}`);
   console.log(`  Institution:     ${institutionAddr}`);
   console.log(`    Name:          Acme Financial Services`);
+  console.log(`    btcPubkey:     ${await institution.read.btcPubkey()}`);
+  console.log(`    inscriptionId: ${await institution.read.inscriptionId()}`);
+  console.log(`    runeId:        ${await institution.read.runeId()}`);
+  console.log(`    Vault:         ${vaultAddress}`);
   console.log(`    Members:       ${memberCount}`);
   console.log(`    Processes:     ${await institution.read.getProcessCount()}`);
   console.log(`  ProcessTemplate: ${templateAddr}`);
