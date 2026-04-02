@@ -77,6 +77,12 @@ struct Args {
     #[arg(long)]
     citrea_rpc: Option<String>,
 
+    /// Auto-discover all BINST contract addresses from the deployer.
+    /// Requires --citrea-rpc and --deployer. Queries getInstitutions(),
+    /// getDeployedProcesses(), getAllInstances() via eth_call.
+    #[arg(long)]
+    discover: bool,
+
     /// BINST deployer contract address (hex, 0x-prefixed).
     /// When set, state diffs are matched against BINST slots.
     #[arg(long)]
@@ -125,13 +131,17 @@ fn parse_address(s: &str) -> Result<[u8; 20], String> {
     Ok(addr)
 }
 
-/// Build a BinstRegistry from CLI arguments.
-/// Returns None if no BINST addresses were specified.
-fn build_registry(args: &Args) -> Option<BinstRegistry> {
+/// Build a BinstRegistry from CLI arguments and optional discovery results.
+/// Returns None if no BINST addresses were specified or discovered.
+fn build_registry(
+    args: &Args,
+    discovered: Option<&citrea_rpc::DiscoveredContracts>,
+) -> Option<BinstRegistry> {
     let has_any = args.deployer.is_some()
         || !args.institution.is_empty()
         || !args.template.is_empty()
-        || !args.instance.is_empty();
+        || !args.instance.is_empty()
+        || discovered.is_some();
 
     if !has_any {
         return None;
@@ -161,6 +171,19 @@ fn build_registry(args: &Args) -> Option<BinstRegistry> {
         match parse_address(inst) {
             Ok(addr) => reg.add_instance(addr),
             Err(e) => eprintln!("Warning: bad --instance address: {e}"),
+        }
+    }
+
+    // Merge discovered contracts
+    if let Some(disc) = discovered {
+        for addr in &disc.institutions {
+            reg.add_institution(*addr);
+        }
+        for addr in &disc.templates {
+            reg.add_template(*addr);
+        }
+        for addr in &disc.instances {
+            reg.add_instance(*addr);
         }
     }
 
@@ -459,7 +482,65 @@ fn print_json(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let registry = build_registry(&args);
+
+    // ── Discovery: auto-discover BINST contracts via Citrea RPC ──
+    let discovered = if args.discover {
+        let rpc_url = args.citrea_rpc.as_deref().ok_or(
+            "--discover requires --citrea-rpc <URL>",
+        )?;
+        let deployer_hex = args.deployer.as_deref().ok_or(
+            "--discover requires --deployer <ADDRESS>",
+        )?;
+        let deployer_addr = format!(
+            "0x{}",
+            deployer_hex
+                .strip_prefix("0x")
+                .or_else(|| deployer_hex.strip_prefix("0X"))
+                .unwrap_or(deployer_hex)
+        );
+        let client = citrea_rpc::CitreaClient::new(rpc_url);
+        match client.discover_binst_contracts(&deployer_addr) {
+            Ok(disc) => {
+                eprintln!("Discovered BINST contracts:");
+                eprintln!(
+                    "  {} institution(s): {}",
+                    disc.institutions.len(),
+                    disc.institutions
+                        .iter()
+                        .map(|a| format!("0x{}", hex::encode(a)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                eprintln!(
+                    "  {} template(s):    {}",
+                    disc.templates.len(),
+                    disc.templates
+                        .iter()
+                        .map(|a| format!("0x{}", hex::encode(a)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                eprintln!(
+                    "  {} instance(s):    {}",
+                    disc.instances.len(),
+                    disc.instances
+                        .iter()
+                        .map(|a| format!("0x{}", hex::encode(a)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                Some(disc)
+            }
+            Err(e) => {
+                eprintln!("Warning: contract discovery failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let registry = build_registry(&args, discovered.as_ref());
 
     if let Some(ref citrea_url) = args.citrea_rpc {
         return run_rpc_mode(citrea_url, &args, registry.as_ref());
