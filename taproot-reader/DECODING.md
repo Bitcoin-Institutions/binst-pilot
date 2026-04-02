@@ -205,6 +205,70 @@ The `--discover` flag crawls the deployer contract on-chain:
 
 ---
 
+## Human-readable value decoding
+
+Once BINST storage slot changes are identified in a state diff, the raw hex
+values are decoded into human-readable form by the `value` module in
+`binst-decoder`.
+
+### Citrea little-endian word order (key discovery)
+
+**Citrea / Sovereign SDK stores EVM storage values in little-endian word
+order.** The entire 32-byte slot value is byte-reversed compared to the
+standard Solidity ABI encoding used by geth/mainnet Ethereum.
+
+Example — the uint256 value `1`:
+- Standard Solidity (BE): `0x0000000000000000000000000000000000000000000000000000000000000001`
+- Citrea state trie (LE): `0x0100000000000000000000000000000000000000000000000000000000000000`
+
+The decoder pads the raw value to 32 bytes (state diffs may trim trailing LE
+zeros) and reverses before interpreting according to the field's Solidity type.
+
+### Decoded type examples
+
+From real block 127848 (19 BINST state changes):
+
+```
+ProcessTemplate.name = "KYC Verification"          ← short Solidity string decoded inline
+ProcessTemplate.description = <string, 62 bytes>    ← long string (data at keccak(slot))
+ProcessTemplate.creator = 0x46c505d38e9009a16398f268e26dff6844ef59d5
+ProcessTemplate.steps.length = 4
+ProcessTemplate.instantiationCount = 1
+ProcessInstance.creator = 0x8cf6fe5cd0905b6bfb81643b0dcda64af32fd762
+ProcessInstance.currentStepIndex = 4
+ProcessInstance.totalSteps = 4
+ProcessInstance.completed = true
+ProcessInstance.createdAt = 1774750572
+ProcessInstance.stepStates[0] = Completed by 0x8cf6fe5cd0905b6bfb81643b0dcda64af32fd762
+BINSTDeployer.institutions[0] = 0x3a6a07c5d2c420331f68dd407aafff92f3275a86
+```
+
+### Supported Solidity types
+
+| Solidity type | SlotType | Decoding |
+|---|---|---|
+| `address` | `Address` | Last 20 bytes of BE word → `0x…` |
+| `uint256` | `Uint256` | Big-endian → decimal string |
+| `bool` | `Bool` | `0` → `false`, non-zero → `true` |
+| `bytes32` | `Bytes32` | Full 32 bytes → `0x…` hex |
+| `string` (≤31 chars) | `SolString` | Inline: high bytes = data, low byte / 2 = length |
+| `string` (>31 chars) | `SolString` | Low bit = 1 → `<string, N bytes>` (data at `keccak256(slot)`) |
+| `StepState` struct | `StepState` | Packed: `word[31]` = status, `word[11..31]` = actor |
+
+### Packed struct layout (StepState)
+
+Solidity packs `uint8 status` + `address actor` right-aligned in one slot:
+
+```
+BE word (after LE→BE reversal):
+  [00 × 11 bytes][actor × 20 bytes][status × 1 byte]
+   ↑ padding      ↑ bytes 11..31    ↑ byte 31
+```
+
+Status values: `0` = Pending, `1` = Completed, `2` = Rejected.
+
+---
+
 ## Important implementation notes and edge cases
 
 - **Borsh discriminant is 1 byte.** Citrea uses a 1-byte enum index (empirically verified). Do not assume 4-byte discriminants.
@@ -247,6 +311,8 @@ The `--discover` flag crawls the deployer contract on-chain:
 - ~~Implement a state-diff parser for `Complete` batch proofs — extracting `(contract, slot, old_value, new_value)` tuples from the raw proof bytes.~~ **Done** — `binst-decoder` crate decodes JMT keys, builds forward-hash lookup tables, and maps state diffs to BINST slots.
 
 - ~~Integrate with the `binst-decoder` crate to map decoded state diffs to BINST protocol entities (institutions, templates, instances).~~ **Done** — `map_state_diff()` identifies BINST changes; `--discover` auto-discovers all contract addresses from the deployer.
+
+- ~~Add human-readable value decoding for state diff values (addresses, integers, booleans, strings, packed structs).~~ **Done** — `value.rs` module decodes raw Citrea LE storage values to human-readable form. Key finding: Citrea stores EVM slot values in little-endian word order (entire 32-byte word byte-reversed). Verified against real block 127848.
 
 Note: this document covers the verification tier only. For the entity identity
 and membership layers (Ordinals + Runes), see `BITCOIN-IDENTITY.md`.

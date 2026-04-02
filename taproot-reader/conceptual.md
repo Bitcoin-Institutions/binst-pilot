@@ -252,7 +252,11 @@ taproot-reader/
   crates/
     citrea-decoder/    ← Citrea DA inscription parser (no_std, WASM-ready)
     binst-decoder/     ← Storage slots → protocol entities (BitcoinIdentity-aware)
-    cli/               ← citrea-scanner binary (connects to Bitcoin Core RPC)
+                         includes value.rs: human-readable decoding
+                         (addresses, uints, bools, strings, StepState structs)
+                         with Citrea LE→BE word reversal
+    cli/               ← citrea-scanner binary (connects to Bitcoin Core RPC
+                         or Citrea RPC; supports --discover)
 ```
 
 See `BITCOIN-IDENTITY.md` for the full architecture specification.

@@ -29,14 +29,18 @@ Template: `0x3A6A07C5D2C420331f68DD407AaFff92f3275a86`
 
 ## 2. Final On-Chain State (Citrea)
 
-| Slot | Field | Value |
-|------|-------|-------|
-| 0 | template | `0x3A6A07C5D2C420331f68DD407AaFff92f3275a86` |
-| 1 | creator | `0x8CF6fe5cd0905b6bFb81643b0DCda64Af32fd762` |
-| 2 | currentStepIndex | 4 |
-| 3 | totalSteps | 4 |
-| 4 | completed | `true` |
-| 5 | createdAt | `0x69c88b6c` (1 771 441 004) |
+| Slot | Field | Raw Value | Decoded |
+|------|-------|-----------|---------|
+| 0 | template | `0x3A6A07C5D2C420331f68DD407AaFff92f3275a86` | `0x3a6a07c5d2c420331f68dd407aafff92f3275a86` |
+| 1 | creator | `0x8CF6fe5cd0905b6bFb81643b0DCda64Af32fd762` | `0x8cf6fe5cd0905b6bfb81643b0dcda64af32fd762` |
+| 2 | currentStepIndex | 4 | `4` |
+| 3 | totalSteps | 4 | `4` |
+| 4 | completed | `true` | `true` |
+| 5 | createdAt | `0x69c88b6c` (1 774 750 572) | `1774750572` |
+
+The **Decoded** column shows the output of the `binst-decoder` value module,
+which reverses the Citrea LE word order and interprets each field according
+to its Solidity type (address, uint256, bool, etc.).
 
 ## 3. The DA Commitment on Bitcoin
 

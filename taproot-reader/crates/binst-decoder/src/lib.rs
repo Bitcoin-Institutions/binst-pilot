@@ -16,6 +16,11 @@
 //!   tuples extracted from batch-proof state diffs, reconstruct the full
 //!   protocol state: institution names, members, process progress, etc.
 //!
+//! - **Value decoding** — the [`value`] module decodes raw Citrea storage
+//!   values (which are in little-endian word order) into human-readable
+//!   form: addresses, integers, booleans, short Solidity strings, and
+//!   packed `StepState` structs.
+//!
 //! ## Architecture
 //!
 //! ```text
@@ -24,6 +29,7 @@
 //!     → batch proof body  (contains compressed state diff)
 //!       → binst-decoder  (map storage slots → protocol entities)
 //!         → InstitutionState, ProcessTemplateState, ProcessInstanceState
+//!         → value::DecodedValue (human-readable decoded values)
 //! ```
 
 pub mod diff;

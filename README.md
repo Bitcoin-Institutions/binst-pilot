@@ -91,7 +91,7 @@ A Rust workspace that decodes BINST data directly from Bitcoin:
 | Crate | Description |
 |-------|-------------|
 | `citrea-decoder` | Parses Citrea DA inscriptions (sequencer commitments, batch proofs) from raw tapscript witness |
-| `binst-decoder` | Maps L2 storage slot diffs → BINST entities (`InstitutionState`, `ProcessTemplateState`, etc.) |
+| `binst-decoder` | Maps L2 storage slot diffs → BINST entities. Includes human-readable value decoding (addresses, uints, bools, strings, packed structs) with Citrea LE→BE word reversal |
 | `binst-inscription` | Parses Ordinals envelopes for `binst` metaprotocol inscriptions; typed entity bodies |
 | `cli` (`citrea-scanner`) | Binary that scans Bitcoin Core or queries Citrea RPC for DA transactions. Supports `--discover` to auto-find BINST contracts |
 
@@ -139,7 +139,7 @@ npm install
 # Compile Solidity (Shanghai EVM)
 npx hardhat compile
 
-# Run tests (14 Solidity + 54 Rust = 68 total)
+# Run tests (14 Solidity + 68 Rust = 82 total)
 npx hardhat test
 cd taproot-reader && cargo test
 
@@ -219,6 +219,34 @@ cargo run --bin citrea-scanner -- \
 The `--discover` flag queries the deployer contract on-chain to crawl the full
 registry: `deployer → institutions → templates → instances`.
 
+### Human-readable value decoding
+
+State diff values are automatically decoded from raw hex to human-readable form:
+
+```
+ProcessTemplate.name = "KYC Verification"
+ProcessInstance.creator = 0x8cf6fe5cd0905b6bfb81643b0dcda64af32fd762
+ProcessInstance.stepStates[0] = Completed by 0x8cf6fe5cd0905b6bfb81643b0dcda64af32fd762
+ProcessInstance.currentStepIndex = 4
+ProcessInstance.completed = true
+BINSTDeployer.institutions[0] = 0x3a6a07c5d2c420331f68dd407aafff92f3275a86
+```
+
+| Solidity type | Decoded form |
+|---|---|
+| `address` | `0x8cf6fe5c…d762` |
+| `uint256` | `4`, `1774750572` |
+| `bool` | `true` / `false` |
+| `string` (short ≤31 bytes) | `"KYC Verification"` |
+| `string` (long) | `<string, 62 bytes>` |
+| `StepState` (packed struct) | `Completed by 0x8cf6…d762` |
+| `bytes32` | `0x…` hex |
+
+**Key discovery:** Citrea / Sovereign SDK stores EVM storage values in
+little-endian word order — the entire 32-byte slot is byte-reversed compared
+to standard Solidity ABI encoding. The decoder pads to 32 bytes and reverses
+before interpreting.
+
 ---
 
 ## Documentation
@@ -236,7 +264,7 @@ registry: `deployer → institutions → templates → instances`.
 
 - **Hardhat 3** with Viem (not ethers)
 - **Solidity 0.8.24** targeting Shanghai EVM
-- **Rust 1.94** — taproot-reader workspace (4 crates, 54 tests)
+- **Rust 1.94** — taproot-reader workspace (4 crates, 68 tests)
 - **TypeScript** (ESM)
 - **Citrea Testnet** (chain 5115, Bitcoin Testnet4 DA layer)
 - **Bitcoin Core** testnet4 for full-node verification (optional — Citrea RPC mode available)
