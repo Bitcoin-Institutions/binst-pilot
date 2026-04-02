@@ -28,6 +28,7 @@
 
 pub mod entities;
 pub mod storage;
+pub mod diff;
 
 pub use entities::*;
 pub use storage::*;

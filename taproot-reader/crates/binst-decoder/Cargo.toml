@@ -13,5 +13,7 @@ thiserror = "2"
 tiny-keccak = { version = "2", features = ["keccak"] }
 
 [dev-dependencies]
+borsh = { version = "1", features = ["derive"] }
+brotli = "7"
 hex = "0.4"
 hex-literal = "0.4"

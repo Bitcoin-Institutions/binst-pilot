@@ -27,6 +27,7 @@
 
 mod types;
 mod parser;
+pub mod proof;
 
 pub use types::*;
 pub use parser::*;

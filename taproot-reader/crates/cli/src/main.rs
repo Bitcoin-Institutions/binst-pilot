@@ -21,6 +21,7 @@ use bitcoincore_rpc::{Auth, Client, RpcApi};
 use citrea_decoder::{
     extract_tapscript, has_citrea_prefix, parse_tapscript, DataOnDa, REVEAL_TX_PREFIX,
 };
+use citrea_decoder::proof::{decode_complete_proof, decompress_proof};
 use clap::Parser;
 
 /// Scan Bitcoin testnet4 for Citrea DA inscriptions.
@@ -178,6 +179,46 @@ fn print_text(
         Ok(DataOnDa::Complete(proof)) => {
             println!("  ── Complete Batch Proof ──");
             println!("  proof size:    {} bytes (compressed)", proof.len());
+
+            // Attempt to decompress and decode
+            match decode_complete_proof(&proof) {
+                Ok(output) => {
+                    let (start, end) = output.commitment_range();
+                    println!("  ── Decoded Proof Output ──");
+                    println!("  last_l2_height:     {}", output.last_l2_height());
+                    println!("  state_roots:        {}", output.state_roots().len());
+                    println!("  commitment_range:   {}..={}", start, end);
+                    println!("  state_diff_entries: {}", output.state_diff_len());
+
+                    if output.state_diff_len() > 0 {
+                        println!("  ── State Diff (first 10) ──");
+                        for (i, (key, value)) in output.state_diff().iter().take(10).enumerate() {
+                            let val_str = match value {
+                                Some(v) => format!("{} bytes", v.len()),
+                                None => "DELETED".to_string(),
+                            };
+                            println!(
+                                "  [{i}] key={} ({} bytes) → {val_str}",
+                                hex::encode(&key[..std::cmp::min(8, key.len())]),
+                                key.len()
+                            );
+                        }
+                        if output.state_diff_len() > 10 {
+                            println!("  ... and {} more entries", output.state_diff_len() - 10);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Try just decompression to show size
+                    match decompress_proof(&proof) {
+                        Ok(raw) => println!(
+                            "  decompressed:  {} bytes (journal extraction failed: {e})",
+                            raw.len()
+                        ),
+                        Err(de) => println!("  decompress failed: {de}"),
+                    }
+                }
+            }
         }
         Ok(DataOnDa::Aggregate(txids, wtxids)) => {
             println!("  ── Aggregate ──");
@@ -227,9 +268,38 @@ fn print_json(
             });
         }
         Ok(DataOnDa::Complete(proof)) => {
-            obj["complete_proof"] = serde_json::json!({
+            let mut proof_obj = serde_json::json!({
                 "compressed_size": proof.len(),
             });
+
+            match decode_complete_proof(&proof) {
+                Ok(output) => {
+                    let (start, end) = output.commitment_range();
+                    proof_obj["last_l2_height"] = serde_json::json!(output.last_l2_height());
+                    proof_obj["state_roots_count"] = serde_json::json!(output.state_roots().len());
+                    proof_obj["commitment_range"] = serde_json::json!([start, end]);
+                    proof_obj["state_diff_entries"] = serde_json::json!(output.state_diff_len());
+
+                    // Include first few state diff entries
+                    let diffs: Vec<serde_json::Value> = output
+                        .state_diff()
+                        .iter()
+                        .take(20)
+                        .map(|(key, value)| {
+                            serde_json::json!({
+                                "key": hex::encode(key),
+                                "value": value.as_ref().map(hex::encode),
+                            })
+                        })
+                        .collect();
+                    proof_obj["state_diff_sample"] = serde_json::json!(diffs);
+                }
+                Err(e) => {
+                    proof_obj["decode_error"] = serde_json::json!(format!("{e}"));
+                }
+            }
+
+            obj["complete_proof"] = proof_obj;
         }
         Ok(DataOnDa::Aggregate(txids, _wtxids)) => {
             obj["aggregate"] = serde_json::json!({
