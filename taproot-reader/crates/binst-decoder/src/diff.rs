@@ -8,26 +8,30 @@
 //!
 //! ```text
 //! BatchProofCircuitOutputV3.state_diff
-//!   → filter by known BINST contract addresses
-//!   → match storage slot keys to BINST field semantics
-//!   → produce Vec<BinstStateChange>
+//!   → parse JMT keys (E/s/, E/a/, E/i/, E/H/, …)
+//!   → match E/s/ storage hashes against pre-computed BINST lookup table
+//!   → decode matched slots into BinstStateChange
 //! ```
 //!
-//! ## Storage key format
+//! ## Storage key format (Citrea JMT)
 //!
-//! Citrea's `CumulativeStateDiff` uses keys of the form:
-//! `<contract_address_prefix><storage_slot>` — but the exact encoding depends
-//! on the state trie implementation (JMT/jellyfish merkle tree).
+//! Citrea's state diff keys are **JMT StorageKey preimages**, not raw EVM
+//! address:slot pairs.  EVM storage entries use the prefix `E/s/` followed
+//! by a 32-byte **storage hash**:
 //!
-//! For EVM storage, the key is typically:
-//! `keccak256(address ++ slot)` for the global state trie, or
-//! `address:slot` in a per-account storage trie.
+//! ```text
+//! storage_hash = SHA-256(contract_address ‖ slot_as_U256_le)
+//! ```
 //!
-//! We support matching by suffix (the storage slot portion) when the contract
-//! address is known, since the key format may vary.
+//! This is a one-way hash, so we pre-compute the expected hashes for every
+//! BINST contract + slot of interest and match incoming entries against our
+//! lookup table.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::jmt::{self, JmtEntry};
 use crate::storage;
 
 /// A meaningful state change in a BINST contract, decoded from a raw storage diff.
@@ -100,7 +104,11 @@ pub enum FieldChange {
     UnknownSlot { slot_hex: String },
 }
 
-/// A registry of known BINST contract addresses used to filter state diffs.
+/// A registry of known BINST contract addresses with a pre-computed lookup
+/// table of JMT storage hashes.
+///
+/// Call [`BinstRegistry::build_lookup`] after adding all addresses to
+/// populate the hash map used by [`map_state_diff`].
 #[derive(Debug, Clone, Default)]
 pub struct BinstRegistry {
     /// Known deployer addresses.
@@ -111,6 +119,19 @@ pub struct BinstRegistry {
     pub templates: Vec<[u8; 20]>,
     /// Known instance addresses.
     pub instances: Vec<[u8; 20]>,
+
+    /// Pre-computed storage_hash → slot entry lookup table.
+    /// Populated by [`build_lookup`].
+    lookup: HashMap<[u8; 32], SlotEntry>,
+}
+
+/// A pre-computed entry: storage_hash → (contract address, contract kind, EVM slot)
+#[derive(Debug, Clone)]
+struct SlotEntry {
+    address: [u8; 20],
+    kind: ContractKind,
+    /// The original EVM storage slot in big-endian (32 bytes).
+    slot_be: [u8; 32],
 }
 
 impl BinstRegistry {
@@ -147,7 +168,7 @@ impl BinstRegistry {
     }
 
     /// Look up which contract kind an address belongs to.
-    pub fn lookup(&self, addr: &[u8; 20]) -> ContractKind {
+    pub fn kind_of(&self, addr: &[u8; 20]) -> ContractKind {
         if self.deployers.contains(addr) {
             ContractKind::BINSTDeployer
         } else if self.institutions.contains(addr) {
@@ -159,6 +180,11 @@ impl BinstRegistry {
         } else {
             ContractKind::Unknown
         }
+    }
+
+    /// Backward-compat alias.
+    pub fn lookup(&self, addr: &[u8; 20]) -> ContractKind {
+        self.kind_of(addr)
     }
 
     /// Total number of registered addresses.
@@ -176,8 +202,160 @@ impl BinstRegistry {
 
     /// Check if an address is known.
     pub fn contains(&self, addr: &[u8; 20]) -> bool {
-        self.lookup(addr) != ContractKind::Unknown
+        self.kind_of(addr) != ContractKind::Unknown
     }
+
+    /// Number of entries in the pre-computed lookup table.
+    pub fn lookup_table_size(&self) -> usize {
+        self.lookup.len()
+    }
+
+    /// Build (or rebuild) the pre-computed JMT storage hash lookup table.
+    ///
+    /// For each registered contract address, we compute the SHA-256 storage
+    /// hash for every "interesting" EVM storage slot (simple slots, array
+    /// base+elements, mapping entries up to a reasonable bound).
+    ///
+    /// This must be called after all addresses have been registered and
+    /// before calling [`map_state_diff`].
+    pub fn build_lookup(&mut self) {
+        self.lookup.clear();
+
+        let mut insert =
+            |addr: &[u8; 20], kind: ContractKind, slots: &[[u8; 32]]| {
+                for slot_be in slots {
+                    let hash = jmt::evm_storage_hash(addr, slot_be);
+                    self.lookup.insert(
+                        hash,
+                        SlotEntry {
+                            address: *addr,
+                            kind,
+                            slot_be: *slot_be,
+                        },
+                    );
+                }
+            };
+
+        for addr in self.deployers.clone() {
+            insert(&addr, ContractKind::BINSTDeployer, &deployer_slots());
+        }
+        for addr in self.institutions.clone() {
+            insert(&addr, ContractKind::Institution, &institution_slots());
+        }
+        for addr in self.templates.clone() {
+            insert(&addr, ContractKind::ProcessTemplate, &template_slots());
+        }
+        for addr in self.instances.clone() {
+            insert(&addr, ContractKind::ProcessInstance, &instance_slots());
+        }
+    }
+
+    /// Look up a JMT storage hash in the pre-computed table.
+    fn resolve_storage_hash(&self, hash: &[u8; 32]) -> Option<&SlotEntry> {
+        self.lookup.get(hash)
+    }
+}
+
+/// Produce all "interesting" EVM storage slots for Institution.sol.
+fn institution_slots() -> Vec<[u8; 32]> {
+    let mut slots = Vec::new();
+    for s in 0..=8u64 {
+        slots.push(slot_be(s));
+    }
+    for i in 0..256u64 {
+        slots.push(storage::array_element(storage::institution::MEMBERS_ARRAY, i));
+        slots.push(storage::array_element(storage::institution::PROCESSES_ARRAY, i));
+    }
+    slots
+}
+
+/// Produce all "interesting" EVM storage slots for ProcessTemplate.sol.
+fn template_slots() -> Vec<[u8; 32]> {
+    let mut slots = Vec::new();
+    for s in 0..=6u64 {
+        slots.push(slot_be(s));
+    }
+    for i in 0..256u64 {
+        slots.push(storage::array_element(storage::template::ALL_INSTANCES_ARRAY, i));
+    }
+    slots
+}
+
+/// Produce all "interesting" EVM storage slots for ProcessInstance.sol.
+fn instance_slots() -> Vec<[u8; 32]> {
+    let mut slots = Vec::new();
+    for s in 0..=6u64 {
+        slots.push(slot_be(s));
+    }
+    for step in 0..64u64 {
+        slots.push(storage::mapping_slot_uint(step, storage::instance::STEP_STATES_MAP));
+    }
+    slots
+}
+
+/// Produce all "interesting" EVM storage slots for BINSTDeployer.sol.
+fn deployer_slots() -> Vec<[u8; 32]> {
+    let mut slots = Vec::new();
+    for s in 0..=1u64 {
+        slots.push(slot_be(s));
+    }
+    for i in 0..256u64 {
+        slots.push(storage::array_element(storage::deployer::INSTITUTIONS_ARRAY, i));
+        slots.push(storage::array_element(storage::deployer::DEPLOYED_PROCESSES_ARRAY, i));
+    }
+    slots
+}
+
+/// Convert a small slot number to a 32-byte big-endian word.
+fn slot_be(slot: u64) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    buf[24..32].copy_from_slice(&slot.to_be_bytes());
+    buf
+}
+
+// ── Main entry point: map a whole state diff ──────────────────────
+
+/// Map a raw JMT state diff (from a batch proof) to BINST state changes.
+///
+/// The `entries` are `(key, Option<value>)` pairs straight from
+/// `BatchProofCircuitOutputV3.state_diff`.
+///
+/// The registry must have been populated and [`BinstRegistry::build_lookup`]
+/// called before invoking this function.
+///
+/// Returns only the entries that matched a known BINST contract slot.
+pub fn map_state_diff(
+    registry: &BinstRegistry,
+    entries: &[(Vec<u8>, Option<Vec<u8>>)],
+) -> Vec<BinstStateChange> {
+    let mut changes = Vec::new();
+
+    for (key, value) in entries {
+        let entry = jmt::parse_jmt_entry(key, value.as_deref());
+
+        match entry {
+            JmtEntry::EvmStorage {
+                storage_hash,
+                value,
+            } => {
+                if let Some(slot_entry) = registry.resolve_storage_hash(&storage_hash) {
+                    let field = decode_slot(slot_entry.kind, &slot_entry.slot_be);
+                    changes.push(BinstStateChange {
+                        contract: slot_entry.kind,
+                        contract_address: Some(slot_entry.address),
+                        field,
+                        raw_key: hex::encode(key),
+                        raw_value: value.map(hex::encode),
+                    });
+                }
+            }
+            _ => {
+                // E/a/, E/i/, E/H/, L/da etc. — not BINST storage changes
+            }
+        }
+    }
+
+    changes
 }
 
 /// Decode a raw state diff entry's storage slot into a BINST field change.
@@ -253,10 +431,12 @@ fn decode_instance_slot(slot: &[u8; 32], slot_u64: Option<u64>) -> FieldChange {
         Some(4) => FieldChange::InstanceCompleted,
         Some(5) => FieldChange::InstanceCreatedAt,
         _ => {
-            // Check mapping: stepStates[step_index]
-            // This is a mapping at slot 6 with uint256 keys
-            // The slot is keccak256(key ++ 6)
-            // We can't easily reverse this, but we can note it's an instance slot
+            // Check stepStates mapping (slot 6): keccak256(step_index ++ 6)
+            for step in 0..64u64 {
+                if *slot == storage::mapping_slot_uint(step, storage::instance::STEP_STATES_MAP) {
+                    return FieldChange::InstanceStepState { step_index: step };
+                }
+            }
             FieldChange::UnknownSlot {
                 slot_hex: hex::encode(slot),
             }
@@ -478,6 +658,15 @@ mod tests {
     }
 
     #[test]
+    fn decode_instance_step_state() {
+        let slot = storage::mapping_slot_uint(2, storage::instance::STEP_STATES_MAP);
+        assert!(matches!(
+            decode_slot(ContractKind::ProcessInstance, &slot),
+            FieldChange::InstanceStepState { step_index: 2 }
+        ));
+    }
+
+    #[test]
     fn sub_words_basic() {
         let a = storage::array_element(0, 5);
         let b = storage::array_base(0);
@@ -498,5 +687,85 @@ mod tests {
         reg.add_institution(addr);
         assert_eq!(reg.lookup(&addr), ContractKind::Institution);
         assert_eq!(reg.lookup(&[0x00; 20]), ContractKind::Unknown);
+    }
+
+    #[test]
+    fn registry_build_lookup_populates_table() {
+        let mut reg = BinstRegistry::new();
+        let addr = [0x42u8; 20];
+        reg.add_deployer(addr);
+        assert_eq!(reg.lookup_table_size(), 0);
+        reg.build_lookup();
+        // deployer_slots: 2 simple + 256*2 array = 514
+        assert!(reg.lookup_table_size() > 0);
+    }
+
+    #[test]
+    fn registry_resolves_known_slot() {
+        let mut reg = BinstRegistry::new();
+        let addr = [0x42u8; 20];
+        reg.add_institution(addr);
+        reg.build_lookup();
+
+        // Compute the JMT hash for Institution slot 0 (name)
+        let hash = jmt::evm_storage_hash_simple(&addr, 0);
+        let entry = reg.resolve_storage_hash(&hash);
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.kind, ContractKind::Institution);
+        assert_eq!(entry.address, addr);
+        assert_eq!(slot_to_u64(&entry.slot_be), Some(0));
+    }
+
+    #[test]
+    fn map_state_diff_finds_binst_entries() {
+        let mut reg = BinstRegistry::new();
+        let addr = [0x42u8; 20];
+        reg.add_institution(addr);
+        reg.build_lookup();
+
+        // Build a fake state diff with one E/s/ entry for slot 0 (name)
+        let hash = jmt::evm_storage_hash_simple(&addr, 0);
+        let mut jmt_key = b"E/s/".to_vec();
+        jmt_key.extend_from_slice(&hash);
+
+        let value = vec![0x48, 0x65, 0x6c, 0x6c, 0x6f]; // "Hello"
+
+        let entries = vec![
+            (jmt_key, Some(value)),
+            // Also add an unrelated E/H/ entry
+            ({
+                let mut k = b"E/H/".to_vec();
+                k.extend_from_slice(&100u64.to_le_bytes());
+                k
+            }, Some(vec![0xFF; 32])),
+        ];
+
+        let changes = map_state_diff(&reg, &entries);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].contract, ContractKind::Institution);
+        assert!(matches!(changes[0].field, FieldChange::InstitutionName));
+    }
+
+    #[test]
+    fn map_state_diff_array_element() {
+        let mut reg = BinstRegistry::new();
+        let addr = [0x01u8; 20];
+        reg.add_deployer(addr);
+        reg.build_lookup();
+
+        // BINSTDeployer.institutions[0] = array_element(0, 0)
+        let slot = storage::array_element(storage::deployer::INSTITUTIONS_ARRAY, 0);
+        let hash = jmt::evm_storage_hash(&addr, &slot);
+        let mut jmt_key = b"E/s/".to_vec();
+        jmt_key.extend_from_slice(&hash);
+
+        let entries = vec![(jmt_key, Some(vec![0xAB; 32]))];
+        let changes = map_state_diff(&reg, &entries);
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            changes[0].field,
+            FieldChange::DeployerInstitutionElement { index: 0 }
+        ));
     }
 }

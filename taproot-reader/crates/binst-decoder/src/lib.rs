@@ -26,9 +26,10 @@
 //!         → InstitutionState, ProcessTemplateState, ProcessInstanceState
 //! ```
 
-pub mod entities;
-pub mod storage;
 pub mod diff;
+pub mod entities;
+pub mod jmt;
+pub mod storage;
 
 pub use entities::*;
 pub use storage::*;

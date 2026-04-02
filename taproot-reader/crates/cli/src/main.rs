@@ -22,6 +22,8 @@ use citrea_decoder::{
     extract_tapscript, has_citrea_prefix, parse_tapscript, DataOnDa, REVEAL_TX_PREFIX,
 };
 use citrea_decoder::proof::{decode_complete_proof, decompress_proof};
+use binst_decoder::diff::{self, BinstRegistry};
+use binst_decoder::jmt;
 use clap::Parser;
 
 /// Scan Bitcoin testnet4 for Citrea DA inscriptions.
@@ -67,6 +69,23 @@ struct Args {
     /// Only show transactions of this type (0-4).
     #[arg(long)]
     kind: Option<u16>,
+
+    /// BINST deployer contract address (hex, 0x-prefixed).
+    /// When set, state diffs are matched against BINST slots.
+    #[arg(long)]
+    deployer: Option<String>,
+
+    /// BINST institution contract addresses (hex, 0x-prefixed, comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    institution: Vec<String>,
+
+    /// BINST template contract addresses (hex, 0x-prefixed, comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    template: Vec<String>,
+
+    /// BINST instance contract addresses (hex, 0x-prefixed, comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    instance: Vec<String>,
 }
 
 fn get_auth(args: &Args) -> Auth {
@@ -87,6 +106,67 @@ fn get_auth(args: &Args) -> Auth {
     }
 }
 
+/// Parse a 0x-prefixed hex address string to [u8; 20].
+fn parse_address(s: &str) -> Result<[u8; 20], String> {
+    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let bytes = hex::decode(s).map_err(|e| format!("invalid hex address: {e}"))?;
+    if bytes.len() != 20 {
+        return Err(format!("address must be 20 bytes, got {}", bytes.len()));
+    }
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(&bytes);
+    Ok(addr)
+}
+
+/// Build a BinstRegistry from CLI arguments.
+/// Returns None if no BINST addresses were specified.
+fn build_registry(args: &Args) -> Option<BinstRegistry> {
+    let has_any = args.deployer.is_some()
+        || !args.institution.is_empty()
+        || !args.template.is_empty()
+        || !args.instance.is_empty();
+
+    if !has_any {
+        return None;
+    }
+
+    let mut reg = BinstRegistry::new();
+
+    if let Some(ref d) = args.deployer {
+        match parse_address(d) {
+            Ok(addr) => reg.add_deployer(addr),
+            Err(e) => eprintln!("Warning: bad --deployer address: {e}"),
+        }
+    }
+    for inst in &args.institution {
+        match parse_address(inst) {
+            Ok(addr) => reg.add_institution(addr),
+            Err(e) => eprintln!("Warning: bad --institution address: {e}"),
+        }
+    }
+    for tpl in &args.template {
+        match parse_address(tpl) {
+            Ok(addr) => reg.add_template(addr),
+            Err(e) => eprintln!("Warning: bad --template address: {e}"),
+        }
+    }
+    for inst in &args.instance {
+        match parse_address(inst) {
+            Ok(addr) => reg.add_instance(addr),
+            Err(e) => eprintln!("Warning: bad --instance address: {e}"),
+        }
+    }
+
+    reg.build_lookup();
+    eprintln!(
+        "BINST registry: {} contracts, {} pre-computed slot hashes",
+        reg.len(),
+        reg.lookup_table_size(),
+    );
+
+    Some(reg)
+}
+
 /// Compute the wtxid of a raw transaction.
 /// wtxid = double-SHA256 of the serialized tx including witness.
 fn compute_wtxid(raw_tx: &[u8]) -> [u8; 32] {
@@ -97,7 +177,7 @@ fn compute_wtxid(raw_tx: &[u8]) -> [u8; 32] {
     result
 }
 
-fn scan_block(client: &Client, height: u64, args: &Args) -> Result<u64, Box<dyn std::error::Error>> {
+fn scan_block(client: &Client, height: u64, args: &Args, registry: Option<&BinstRegistry>) -> Result<u64, Box<dyn std::error::Error>> {
     let block_hash = client.get_block_hash(height)?;
     let block = client.get_block(&block_hash)?;
 
@@ -144,9 +224,9 @@ fn scan_block(client: &Client, height: u64, args: &Args) -> Result<u64, Box<dyn 
         found += 1;
 
         if args.format == "json" {
-            print_json(height, tx_idx, tx, &wtxid, &inscription);
+            print_json(height, tx_idx, tx, &wtxid, &inscription, registry);
         } else {
-            print_text(height, tx_idx, tx, &wtxid, &inscription);
+            print_text(height, tx_idx, tx, &wtxid, &inscription, registry);
         }
     }
 
@@ -159,6 +239,7 @@ fn print_text(
     tx: &bitcoin::Transaction,
     wtxid: &[u8; 32],
     inscription: &citrea_decoder::ParsedInscription,
+    registry: Option<&BinstRegistry>,
 ) {
     println!(
         "Block {height} tx[{tx_idx}] — {} (wtxid: {}...)",
@@ -206,6 +287,35 @@ fn print_text(
                         if output.state_diff_len() > 10 {
                             println!("  ... and {} more entries", output.state_diff_len() - 10);
                         }
+
+                        // BINST matching
+                        if let Some(reg) = registry {
+                            let changes = diff::map_state_diff(reg, output.state_diff());
+                            if !changes.is_empty() {
+                                println!("  ── BINST Changes ({}) ──", changes.len());
+                                for ch in &changes {
+                                    let addr_str = ch.contract_address
+                                        .map(|a| format!("0x{}", hex::encode(a)))
+                                        .unwrap_or_default();
+                                    let val_preview = ch.raw_value.as_deref()
+                                        .map(|v| if v.len() > 16 { format!("{}…", &v[..16]) } else { v.to_string() })
+                                        .unwrap_or_else(|| "DELETED".into());
+                                    println!(
+                                        "    {} {} → {} = {}",
+                                        ch.contract, addr_str, ch.field, val_preview
+                                    );
+                                }
+                            }
+                        }
+
+                        // JMT summary
+                        let summary = jmt::summarize_diff(output.state_diff());
+                        println!(
+                            "  ── JMT summary: {} storage, {} headers, {} accounts, {} idx, {} other ──",
+                            summary.evm_storage, summary.evm_header,
+                            summary.evm_account, summary.evm_account_idx,
+                            summary.other
+                        );
                     }
                 }
                 Err(e) => {
@@ -248,6 +358,7 @@ fn print_json(
     tx: &bitcoin::Transaction,
     wtxid: &[u8; 32],
     inscription: &citrea_decoder::ParsedInscription,
+    registry: Option<&BinstRegistry>,
 ) {
     let mut obj = serde_json::json!({
         "block": height,
@@ -280,7 +391,7 @@ fn print_json(
                     proof_obj["commitment_range"] = serde_json::json!([start, end]);
                     proof_obj["state_diff_entries"] = serde_json::json!(output.state_diff_len());
 
-                    // Include first few state diff entries
+                    // Include all state diff entries (capped at 5000 for safety)
                     let diffs: Vec<serde_json::Value> = output
                         .state_diff()
                         .iter()
@@ -293,6 +404,32 @@ fn print_json(
                         })
                         .collect();
                     proof_obj["state_diff_sample"] = serde_json::json!(diffs);
+
+                    // BINST matching
+                    if let Some(reg) = registry {
+                        let changes = diff::map_state_diff(reg, output.state_diff());
+                        if !changes.is_empty() {
+                            let binst_changes: Vec<serde_json::Value> = changes.iter().map(|ch| {
+                                serde_json::json!({
+                                    "contract": format!("{}", ch.contract),
+                                    "address": ch.contract_address.map(|a| format!("0x{}", hex::encode(a))),
+                                    "field": format!("{}", ch.field),
+                                    "raw_value": ch.raw_value,
+                                })
+                            }).collect();
+                            proof_obj["binst_changes"] = serde_json::json!(binst_changes);
+                        }
+                    }
+
+                    // JMT summary
+                    let summary = jmt::summarize_diff(output.state_diff());
+                    proof_obj["jmt_summary"] = serde_json::json!({
+                        "evm_storage": summary.evm_storage,
+                        "evm_header": summary.evm_header,
+                        "evm_account": summary.evm_account,
+                        "evm_account_idx": summary.evm_account_idx,
+                        "other": summary.other,
+                    });
                 }
                 Err(e) => {
                     proof_obj["decode_error"] = serde_json::json!(format!("{e}"));
@@ -317,6 +454,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let auth = get_auth(&args);
     let client = Client::new(&args.rpc_url, auth)?;
+    let registry = build_registry(&args);
 
     // Verify connection
     let info = client.get_blockchain_info()?;
@@ -342,7 +480,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut total_found = 0u64;
     for height in from..=to {
-        match scan_block(&client, height, &args) {
+        match scan_block(&client, height, &args, registry.as_ref()) {
             Ok(n) => total_found += n,
             Err(e) => eprintln!("Error scanning block {height}: {e}"),
         }
