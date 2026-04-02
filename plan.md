@@ -56,10 +56,10 @@ contracts and pointing them at the same inscription.
 |-------|---------|--------|
 | `citrea-decoder` | Parses Citrea DA inscriptions from raw tapscript witness | ✅ 2 tests |
 | `binst-decoder` | Maps L2 storage slot diffs → BINST entities (`BitcoinIdentity`, `InstitutionState`, etc.) | ✅ 5 tests |
-| `binst-inscription` | Parses Ordinals envelopes for `binst` metaprotocol inscriptions | ✅ 9 tests |
-| `cli` (`citrea-scanner`) | Connects to Bitcoin Core RPC, scans for Citrea DA transactions | ✅ tested live (16 inscriptions in 50 blocks) |
+| `binst-inscription` | Parses Ordinals envelopes for `binst` metaprotocol inscriptions | ✅ 10 tests |
+| `cli` (`citrea-scanner`) | Connects to Bitcoin Core RPC, scans for Citrea DA transactions | ✅ tested live |
 
-16 tests passing (`cargo test`).
+17 tests passing (`cargo test`).
 
 ### WASM Webapp
 
@@ -105,8 +105,30 @@ Two decode modes: JSON body parse and raw witness hex envelope extraction.
 ### JSON Schema
 
 `taproot-reader/schema/binst-metaprotocol.json` — JSON Schema 2020-12 for
-`institution`, `process_template`, `process_instance`, `step_execution`.
+`institution`, `process_template`, `process_instance`, `step_execution`,
+`state_digest`.
 Reference payloads in `schema/examples/`.
+
+### DA Proof (ProcessInstance → Bitcoin)
+
+Proved that all ProcessInstance state changes are committed to Bitcoin L1
+via Citrea DA — no separate Ordinals inscription needed. See `DA-PROOF.md`.
+
+| L2 Transaction | L2 Block | Bitcoin DA |
+|---------------|----------|------------|
+| Deploy ProcessInstance `0x2066B17e…` | 23 971 461 | SequencerCommitment seq_idx 16697 |
+| executeStep (step 1) | 23 971 463 | same commitment |
+| executeStep (step 2) | 23 971 466 | same commitment |
+| executeStep (step 3) | 23 971 469 | same commitment |
+| executeStep (step 4 — completes) | 23 971 472 | same commitment |
+
+**Bitcoin anchor:** block 127 747, txid `ce8a015b670a47ade22cacba193cfbf5fba535752fb3c2c738bd2f7bcfc468c2`
+
+Architecture decision: Ordinals inscriptions for identity (Institution,
+ProcessTemplate) — expensive, permanent, few. Bitcoin DA for execution
+state (ProcessInstance) — free (sequencer pays), trustless, scalable.
+Periodic `state_digest` inscriptions as an index layer — cheap, makes DA
+discoverable.
 
 ---
 
@@ -118,6 +140,7 @@ Reference payloads in `schema/examples/`.
 | **1** | Inscription identity: JSON schema, `binst-inscription` crate, Solidity `inscriptionId`/`runeId` fields, Taproot vault script, inscription CLI | ✅ |
 | **1b** | Authority model flip: Bitcoin key = sovereign, L2 = delegate, `bitcoin_pubkey` required in Rust structs, L2 portability docs | ✅ |
 | **2** | Bitcoin-key sovereignty in Solidity: `btcPubkey` field, BTC→EVM derivation for trustless binding, live inscription on testnet4, WASM webapp | ✅ |
+| **2b** | DA proof: ProcessInstance state reachable via Bitcoin DA, `state_digest` schema, storage layout update for `btcPubkey` | ✅ |
 | **3** | Membership Runes + cross-chain sync: etch Rune, mint/distribute, LayerZero V2 relay (`BINSTRelay.sol` OApp), read-only mirrors on other L2s, batch BTC-side operations | ⬜ |
 | **4** | Bitcoin-native discovery + unified wallet: `binst` indexer, member queries via Rune balances, Schnorr-verified single-wallet UX, cross-chain process verification via Bitcoin DA | ⬜ |
 | **5** | Deep Bitcoin integration: covenant vaults (OP_CTV/OP_CAT), MuSig2 admin, Rune-gated access, BitVM verification | ⬜ |
@@ -132,9 +155,9 @@ See `BITCOIN-IDENTITY.md` § "Implementation phases" for full details.
 
 | Component | Details |
 |-----------|---------|
-| **Dev machine** (macOS) | Node.js 22+, Rust 1.94, Hardhat 3.2, `ord` 0.27 |
-| **Bitcoin Core testnet4** | Remote node via SSH tunnel, `rpc:48332`, fully synced |
-| **`ord` index** | Local, syncing against testnet4 node |
+| **Dev machine** (macOS) | Node.js 22+, Rust 1.94, Hardhat 3.2 |
+| **Home server** (Docker) | Bitcoin Core testnet4 + mainnet + signet (3 containers), `ord` 0.27 server (4th container) |
+| **SSH tunnel** | Ports 8332, 38332, 48332 (bitcoind), 8080 (ord) via `tnl` alias |
 | **Citrea testnet** | Public RPC `https://rpc.testnet.citrea.xyz`, chain 5115 |
 
 ### Citrea system contracts
@@ -204,6 +227,21 @@ function. See `BITCOIN-IDENTITY.md` § "Institution anchoring lifecycle".
 Current UX requires a Bitcoin wallet (Xverse/Unisat) for inscriptions/runes
 and an EVM wallet (MetaMask) for L2 transactions. Future: Schnorr-verified
 sessions via account abstraction enable a single Bitcoin wallet for both.
+
+### 8. ProcessInstance uses DA, not individual inscriptions
+Inscribing each ProcessInstance individually costs ~$5.50. At 1,000
+instances that is ~$5,500 with no additional security benefit — the
+Citrea sequencer already commits all L2 state to Bitcoin as DA. Instead:
+- **Identity entities** (Institution, ProcessTemplate) get Ordinals
+  inscriptions — few, permanent, discoverable.
+- **Execution state** (ProcessInstance) relies on Bitcoin DA — free
+  (sequencer pays), trustless, ZK-proven.
+- **State digest** inscriptions are a periodic index layer — one
+  inscription per epoch summarizes all activity and points to the
+  specific DA commitments. Cost: ~1 inscription per institution per
+  epoch instead of 1 per instance.
+
+Full proof: `DA-PROOF.md`.
 
 ---
 

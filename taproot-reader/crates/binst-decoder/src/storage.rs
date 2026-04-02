@@ -23,9 +23,10 @@
 //!   slot 2: deployer         (address)
 //!   slot 3: inscriptionId    (string)    — Ordinals inscription ID
 //!   slot 4: runeId           (string)    — membership Rune ID
-//!   slot 5: members          (address[]) — length at 5, elements at keccak256(5)+i
-//!   slot 6: isMember         (mapping(address => bool)) — keccak256(addr . 6)
-//!   slot 7: processes        (address[]) — length at 7, elements at keccak256(7)+i
+//!   slot 5: btcPubkey        (bytes32)   — Taproot x-only public key
+//!   slot 6: members          (address[]) — length at 6, elements at keccak256(6)+i
+//!   slot 7: isMember         (mapping(address => bool)) — keccak256(addr . 7)
+//!   slot 8: processes        (address[]) — length at 8, elements at keccak256(8)+i
 //!
 //! ### ProcessTemplate.sol
 //!   slot 0: name               (string)
@@ -121,9 +122,10 @@ pub mod institution {
     pub const DEPLOYER: u64 = 2;
     pub const INSCRIPTION_ID: u64 = 3;
     pub const RUNE_ID: u64 = 4;
-    pub const MEMBERS_ARRAY: u64 = 5;
-    pub const IS_MEMBER_MAP: u64 = 6;
-    pub const PROCESSES_ARRAY: u64 = 7;
+    pub const BTC_PUBKEY: u64 = 5;
+    pub const MEMBERS_ARRAY: u64 = 6;
+    pub const IS_MEMBER_MAP: u64 = 7;
+    pub const PROCESSES_ARRAY: u64 = 8;
 }
 
 /// Storage slot assignments for `ProcessTemplate.sol`.

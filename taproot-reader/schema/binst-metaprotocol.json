@@ -13,7 +13,7 @@
     },
     "type": {
       "type": "string",
-      "enum": ["institution", "process_template", "process_instance", "step_execution"],
+      "enum": ["institution", "process_template", "process_instance", "step_execution", "state_digest"],
       "description": "The BINST entity type this inscription represents."
     }
   },
@@ -22,7 +22,8 @@
     { "$ref": "#/$defs/institution" },
     { "$ref": "#/$defs/process_template" },
     { "$ref": "#/$defs/process_instance" },
-    { "$ref": "#/$defs/step_execution" }
+    { "$ref": "#/$defs/step_execution" },
+    { "$ref": "#/$defs/state_digest" }
   ],
 
   "$defs": {
@@ -177,6 +178,137 @@
           "type": "string",
           "pattern": "^[0-9a-fA-F]{64}$",
           "description": "SHA-256 of the step evidence data (full data lives on Citrea)."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "state_digest": {
+      "type": "object",
+      "required": ["v", "type", "institution", "l2_block_range", "summary", "da_anchors"],
+      "description": "Periodic index inscription linking institution activity to Bitcoin DA. Parent inscription MUST be the institution inscription. Makes DA-committed state discoverable without full-chain scanning.",
+      "properties": {
+        "v": { "const": 0 },
+        "type": { "const": "state_digest" },
+        "institution": {
+          "$ref": "#/$defs/inscription_id",
+          "description": "Inscription ID of the parent institution."
+        },
+        "l2_block_range": {
+          "type": "object",
+          "required": ["from", "to"],
+          "properties": {
+            "from": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "First L2 block in this digest window (inclusive)."
+            },
+            "to": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Last L2 block in this digest window (inclusive)."
+            }
+          },
+          "additionalProperties": false,
+          "description": "L2 block range covered by this digest."
+        },
+        "summary": {
+          "type": "object",
+          "required": ["instances_created", "instances_completed", "steps_executed"],
+          "properties": {
+            "instances_created": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of ProcessInstances created in this window."
+            },
+            "instances_completed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of ProcessInstances that reached completed=true."
+            },
+            "steps_executed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Total number of executeStep calls across all instances."
+            },
+            "members_added": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of new members added to the institution."
+            },
+            "members_removed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of members removed from the institution."
+            }
+          },
+          "additionalProperties": false,
+          "description": "Aggregate activity counts for this window."
+        },
+        "state_root": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$",
+          "description": "Keccak-256 of the concatenated storage roots of all institution contracts at l2_block_range.to. Allows compact verification that the L2 state matches this digest."
+        },
+        "da_anchors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["btc_block", "btc_txid", "seq_index"],
+            "properties": {
+              "btc_block": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Bitcoin block height containing this DA inscription."
+              },
+              "btc_txid": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "description": "Bitcoin txid of the SequencerCommitment inscription."
+              },
+              "seq_index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Citrea sequencer commitment index."
+              },
+              "l2_end_block": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "L2 end block number of this commitment."
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "List of Bitcoin DA inscriptions (SequencerCommitments) that cover the l2_block_range. These are the Bitcoin transactions that prove the L2 state transitions."
+        },
+        "contracts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["address", "role"],
+            "properties": {
+              "address": {
+                "$ref": "#/$defs/hex_address",
+                "description": "Contract address on Citrea."
+              },
+              "role": {
+                "type": "string",
+                "enum": ["institution", "template", "instance", "deployer"],
+                "description": "The contract's role in the protocol."
+              },
+              "name": {
+                "type": "string",
+                "description": "Human-readable name (for institution/template)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Optional list of contracts active in this window. Helps indexers discover contract addresses without scanning DA."
+        },
+        "prev_digest": {
+          "$ref": "#/$defs/inscription_id",
+          "description": "Inscription ID of the previous state_digest for this institution. Forms a linked list of digests, enabling efficient catch-up."
         }
       },
       "additionalProperties": false

@@ -23,5 +23,34 @@
       "steps": ["Submit Document", "Review", "Final Sign-off"],
       "fees_sats": 4960
     }
+  ],
+  "da_proofs": [
+    {
+      "type": "process_instance",
+      "name": "ProcessInstance (Document Approval)",
+      "citrea_contract": "0x2066B17e0e6bD9AB1bbC76A146f68eBfca7C6f4f",
+      "template": "0x3A6A07C5D2C420331f68DD407AaFff92f3275a86",
+      "institution": "0x8CF6fe5cd0905b6bFb81643b0DCda64Af32fd762",
+      "l2_blocks": {
+        "deploy": 23971461,
+        "step1": 23971463,
+        "step2": 23971466,
+        "step3": 23971469,
+        "step4_completed": 23971472
+      },
+      "bitcoin_da": {
+        "btc_block": 127747,
+        "btc_txid": "ce8a015b670a47ade22cacba193cfbf5fba535752fb3c2c738bd2f7bcfc468c2",
+        "sequencer_index": 16697,
+        "l2_range": [23971029, 23972028],
+        "note": "All 5 L2 transactions in a single SequencerCommitment"
+      },
+      "status": "completed",
+      "final_state": {
+        "currentStepIndex": 4,
+        "totalSteps": 4,
+        "completed": true
+      }
+    }
   ]
 }

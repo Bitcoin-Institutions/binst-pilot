@@ -19,6 +19,9 @@ pub enum BinstEntity {
 
     #[serde(rename = "step_execution")]
     StepExecution(StepExecutionBody),
+
+    #[serde(rename = "state_digest")]
+    StateDigest(StateDigestBody),
 }
 
 /// JSON body for a `type: "institution"` inscription.
@@ -101,6 +104,82 @@ pub struct StepExecutionBody {
     pub data_hash: Option<String>,
 }
 
+/// L2 block range covered by a state digest.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct L2BlockRange {
+    pub from: u64,
+    pub to: u64,
+}
+
+/// Activity summary within a digest window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DigestSummary {
+    pub instances_created: u64,
+    pub instances_completed: u64,
+    pub steps_executed: u64,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members_added: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members_removed: Option<u64>,
+}
+
+/// A pointer to a Bitcoin DA inscription (SequencerCommitment).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DaAnchor {
+    pub btc_block: u64,
+    pub btc_txid: String,
+    pub seq_index: u64,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub l2_end_block: Option<u64>,
+}
+
+/// A contract reference within a digest.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DigestContract {
+    pub address: String,
+    pub role: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// JSON body for a `type: "state_digest"` inscription.
+///
+/// Periodic index inscription that links institution activity to Bitcoin DA.
+/// Parent inscription MUST be the institution inscription.
+/// Forms a linked list via `prev_digest` for efficient catch-up.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StateDigestBody {
+    pub v: u32,
+
+    /// Inscription ID of the parent institution.
+    pub institution: String,
+
+    /// L2 block range covered by this digest.
+    pub l2_block_range: L2BlockRange,
+
+    /// Aggregate activity counts.
+    pub summary: DigestSummary,
+
+    /// Keccak-256 of concatenated storage roots (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_root: Option<String>,
+
+    /// Bitcoin DA inscriptions covering the L2 range.
+    pub da_anchors: Vec<DaAnchor>,
+
+    /// Contracts active in this window (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contracts: Option<Vec<DigestContract>>,
+
+    /// Previous state_digest inscription ID (linked list).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prev_digest: Option<String>,
+}
+
 /// Parse a JSON string into a typed BINST entity.
 pub fn parse_binst_body(json: &str) -> Result<BinstEntity, serde_json::Error> {
     serde_json::from_str(json)
@@ -181,5 +260,46 @@ mod tests {
     fn reject_unknown_type() {
         let json = r#"{ "v": 0, "type": "unknown_entity", "name": "test" }"#;
         assert!(parse_binst_body(json).is_err());
+    }
+
+    #[test]
+    fn parse_state_digest() {
+        let json = r#"{
+            "v": 0,
+            "type": "state_digest",
+            "institution": "9fc9870038becdae3b9a654ccdfcea9b90108cd098c06098fd34f5af55247511i0",
+            "l2_block_range": { "from": 23971029, "to": 23972028 },
+            "summary": {
+                "instances_created": 1,
+                "instances_completed": 1,
+                "steps_executed": 4
+            },
+            "da_anchors": [
+                {
+                    "btc_block": 127747,
+                    "btc_txid": "ce8a015b670a47ade22cacba193cfbf5fba535752fb3c2c738bd2f7bcfc468c2",
+                    "seq_index": 16697,
+                    "l2_end_block": 23972028
+                }
+            ],
+            "contracts": [
+                { "address": "0x2066B17e0e6bD9AB1bbC76A146f68eBfca7C6f4f", "role": "instance" }
+            ]
+        }"#;
+
+        let entity = parse_binst_body(json).unwrap();
+        match entity {
+            BinstEntity::StateDigest(digest) => {
+                assert_eq!(digest.institution, "9fc9870038becdae3b9a654ccdfcea9b90108cd098c06098fd34f5af55247511i0");
+                assert_eq!(digest.l2_block_range.from, 23971029);
+                assert_eq!(digest.l2_block_range.to, 23972028);
+                assert_eq!(digest.summary.instances_created, 1);
+                assert_eq!(digest.summary.steps_executed, 4);
+                assert_eq!(digest.da_anchors.len(), 1);
+                assert_eq!(digest.da_anchors[0].btc_block, 127747);
+                assert!(digest.prev_digest.is_none());
+            }
+            _ => panic!("Expected StateDigest"),
+        }
     }
 }
