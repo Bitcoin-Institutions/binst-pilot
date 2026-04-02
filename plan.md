@@ -72,9 +72,10 @@ Two decode modes: JSON body parse and raw witness hex envelope extraction.
 
 ### Live Inscriptions (Bitcoin testnet4)
 
-| Entity | Inscription ID | Commit TX | Reveal TX | Fees |
-|--------|---------------|-----------|-----------|------|
-| Institution "BINST Pilot Institution" | `9fc9870038becdae3b9a654ccdfcea9b90108cd098c06098fd34f5af55247511i0` | `53368414…e29c02` | `9fc98700…247511` | 3,470 sats |
+| Entity | Inscription ID | Parent | Fees |
+|--------|---------------|--------|------|
+| Institution "BINST Pilot Institution" | `9fc9870038becdae3b9a654ccdfcea9b90108cd098c06098fd34f5af55247511i0` | — (root) | 3,470 sats |
+| ProcessTemplate "Document Approval" | `f8f39d0e3cebf5a7d7ee772307ae0517bad9f8a82c8812376628bbc8c413a3c4i0` | `9fc987…i0` | 4,960 sats |
 
 - **Admin pubkey:** `79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798`
 - **Citrea contract:** `0x46c505d38e9009a16398f268e26dff6844ef59d5`
