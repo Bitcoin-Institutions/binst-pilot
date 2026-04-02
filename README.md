@@ -93,7 +93,7 @@ A Rust workspace that decodes BINST data directly from Bitcoin:
 | `citrea-decoder` | Parses Citrea DA inscriptions (sequencer commitments, batch proofs) from raw tapscript witness |
 | `binst-decoder` | Maps L2 storage slot diffs → BINST entities (`InstitutionState`, `ProcessTemplateState`, etc.) |
 | `binst-inscription` | Parses Ordinals envelopes for `binst` metaprotocol inscriptions; typed entity bodies |
-| `cli` (`citrea-scanner`) | Binary that connects to Bitcoin Core RPC and scans for Citrea DA transactions |
+| `cli` (`citrea-scanner`) | Binary that scans Bitcoin Core or queries Citrea RPC for DA transactions. Supports `--discover` to auto-find BINST contracts |
 
 ### Bitcoin identity (`BitcoinIdentity` struct)
 
@@ -139,7 +139,7 @@ npm install
 # Compile Solidity (Shanghai EVM)
 npx hardhat compile
 
-# Run tests (12 Solidity + 16 Rust = 28 total)
+# Run tests (14 Solidity + 54 Rust = 68 total)
 npx hardhat test
 cd taproot-reader && cargo test
 
@@ -147,7 +147,7 @@ cd taproot-reader && cargo test
 npx hardhat run scripts/demo-flow.ts
 
 # Deploy to Citrea Testnet
-cp .env.example .env   # add CITREA_PRIVATE_KEY and CITREA_TESTNET_RPC_URL
+cp .env.example .env   # add CITREA_PRIVATE_KEY, BTC_RPC_PASS, etc.
 npx hardhat run scripts/demo-flow.ts --network citreaTestnet
 
 # Generate inscription command for testnet4
@@ -196,6 +196,29 @@ BINST relies on Citrea's rollup infrastructure to anchor all L2 activity to Bitc
 The `taproot-reader` Rust workspace can decode these inscriptions directly
 from a Bitcoin full node — see [DECODING.md](taproot-reader/DECODING.md).
 
+### Citrea RPC mode (no Bitcoin node required)
+
+The `citrea-scanner` CLI can also query batch proofs directly from a Citrea
+full node, without needing a local Bitcoin Core:
+
+```bash
+# Scan a BTC block via Citrea RPC with auto-discovery of BINST contracts
+cargo run --bin citrea-scanner -- \
+  --citrea-rpc https://rpc.testnet.citrea.xyz \
+  --discover \
+  --deployer 0xd0abca83bd52949fcf741d6da0289c5ec7235aaf \
+  --block 127848
+
+# Manual addresses (skip discovery)
+cargo run --bin citrea-scanner -- \
+  --citrea-rpc https://rpc.testnet.citrea.xyz \
+  --deployer 0x... --template 0x... --instance 0x... \
+  --block 127848
+```
+
+The `--discover` flag queries the deployer contract on-chain to crawl the full
+registry: `deployer → institutions → templates → instances`.
+
 ---
 
 ## Documentation
@@ -213,10 +236,10 @@ from a Bitcoin full node — see [DECODING.md](taproot-reader/DECODING.md).
 
 - **Hardhat 3** with Viem (not ethers)
 - **Solidity 0.8.24** targeting Shanghai EVM
-- **Rust 1.94** — taproot-reader workspace (4 crates, 16 tests)
+- **Rust 1.94** — taproot-reader workspace (4 crates, 54 tests)
 - **TypeScript** (ESM)
 - **Citrea Testnet** (chain 5115, Bitcoin Testnet4 DA layer)
-- **Bitcoin Core** testnet4 for full-node verification
+- **Bitcoin Core** testnet4 for full-node verification (optional — Citrea RPC mode available)
 
 ## Part of BINST
 

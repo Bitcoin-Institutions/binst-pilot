@@ -172,13 +172,36 @@ bitcoin-cli -conf=$HOME/.bitcoin/bitcoin-testnet4.conf getrawtransaction <txid> 
 
 We provide a convenience CLI to automate the scanning/decoding: `taproot-reader/crates/cli/` (`citrea-scanner`). Example usage:
 
-```bash
-# Scan a single block and print text output
-cargo run --bin citrea-scanner -- --block 127600 --rpc-user testnet4rpc --rpc-pass <pass>
+### Bitcoin Core mode (local full node)
 
-# Scan a range and print JSON for downstream processing
-cargo run --bin citrea-scanner -- --from 127600 --to 127761 --format json --rpc-user testnet4rpc --rpc-pass <pass>
+```bash
+# Scan a single block (uses cookie auth by default)
+cargo run --bin citrea-scanner -- --block 127600
+
+# Scan a range with explicit auth
+cargo run --bin citrea-scanner -- --from 127600 --to 127761 --format json \
+  --rpc-user <user> --rpc-pass <pass>
 ```
+
+### Citrea RPC mode (no Bitcoin node required)
+
+```bash
+# Query batch proofs directly from Citrea, with auto-discovery of BINST contracts
+cargo run --bin citrea-scanner -- \
+  --citrea-rpc https://rpc.testnet.citrea.xyz \
+  --discover \
+  --deployer 0xd0abca83bd52949fcf741d6da0289c5ec7235aaf \
+  --block 127848
+
+# Manual contract addresses (skip discovery)
+cargo run --bin citrea-scanner -- \
+  --citrea-rpc https://rpc.testnet.citrea.xyz \
+  --deployer 0x... --template 0x... --instance 0x... \
+  --from 127840 --to 127850
+```
+
+The `--discover` flag crawls the deployer contract on-chain:
+`deployer.getInstitutions()` → `institution.getProcesses()` → `template.getAllInstances()`.
 
 ---
 
@@ -221,9 +244,9 @@ cargo run --bin citrea-scanner -- --from 127600 --to 127761 --format json --rpc-
 
 - Export a WASM build of `citrea-decoder` so a lightweight indexer (browser or edge) can decode batch proofs without running a full node.
 
-- Implement a state-diff parser for `Complete` batch proofs — extracting `(contract, slot, old_value, new_value)` tuples from the raw proof bytes.
+- ~~Implement a state-diff parser for `Complete` batch proofs — extracting `(contract, slot, old_value, new_value)` tuples from the raw proof bytes.~~ **Done** — `binst-decoder` crate decodes JMT keys, builds forward-hash lookup tables, and maps state diffs to BINST slots.
 
-- Integrate with the `binst-decoder` crate to map decoded state diffs to BINST protocol entities (institutions, templates, instances).
+- ~~Integrate with the `binst-decoder` crate to map decoded state diffs to BINST protocol entities (institutions, templates, instances).~~ **Done** — `map_state_diff()` identifies BINST changes; `--discover` auto-discovers all contract addresses from the deployer.
 
 Note: this document covers the verification tier only. For the entity identity
 and membership layers (Ordinals + Runes), see `BITCOIN-IDENTITY.md`.
@@ -232,7 +255,7 @@ and membership layers (Ordinals + Runes), see `BITCOIN-IDENTITY.md`.
 
 ## Short checklist — scanning safety
 
-- [ ] Use a local Bitcoin Core with `txindex=1` (optional) if you need historical getrawtransaction access.
-- [ ] Prefer cookie or user/password auth to avoid exposing RPC credentials.
+- [x] Use a local Bitcoin Core with `txindex=1` (optional) if you need historical getrawtransaction access.
+- [x] Prefer cookie or env-var auth to avoid exposing RPC credentials in code or CLI history.
 - [ ] Keep a tip cursor and checkpoint last-scanned block to avoid re-scanning.
 - [ ] Rate-limit parallel RPC requests to avoid overloading the node.
