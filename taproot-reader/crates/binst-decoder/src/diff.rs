@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::jmt::{self, JmtEntry};
 use crate::storage;
+use crate::value;
 
 /// A meaningful state change in a BINST contract, decoded from a raw storage diff.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +48,8 @@ pub struct BinstStateChange {
     pub raw_key: String,
     /// Raw new value (hex), or None if deleted.
     pub raw_value: Option<String>,
+    /// Human-readable decoded value.
+    pub decoded: value::DecodedValue,
 }
 
 /// The kind of BINST contract that was affected.
@@ -340,12 +343,16 @@ pub fn map_state_diff(
             } => {
                 if let Some(slot_entry) = registry.resolve_storage_hash(&storage_hash) {
                     let field = decode_slot(slot_entry.kind, &slot_entry.slot_be);
+                    let raw_value = value.map(hex::encode);
+                    let decoded =
+                        value::decode_value(&field, raw_value.as_deref());
                     changes.push(BinstStateChange {
                         contract: slot_entry.kind,
                         contract_address: Some(slot_entry.address),
                         field,
                         raw_key: hex::encode(key),
-                        raw_value: value.map(hex::encode),
+                        raw_value,
+                        decoded,
                     });
                 }
             }

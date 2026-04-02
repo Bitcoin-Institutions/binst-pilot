@@ -327,12 +327,9 @@ fn print_text(
                                     let addr_str = ch.contract_address
                                         .map(|a| format!("0x{}", hex::encode(a)))
                                         .unwrap_or_default();
-                                    let val_preview = ch.raw_value.as_deref()
-                                        .map(|v| if v.len() > 16 { format!("{}…", &v[..16]) } else { v.to_string() })
-                                        .unwrap_or_else(|| "DELETED".into());
                                     println!(
                                         "    {} {} → {} = {}",
-                                        ch.contract, addr_str, ch.field, val_preview
+                                        ch.contract, addr_str, ch.field, ch.decoded
                                     );
                                 }
                             }
@@ -444,6 +441,7 @@ fn print_json(
                                     "contract": format!("{}", ch.contract),
                                     "address": ch.contract_address.map(|a| format!("0x{}", hex::encode(a))),
                                     "field": format!("{}", ch.field),
+                                    "decoded": format!("{}", ch.decoded),
                                     "raw_value": ch.raw_value,
                                 })
                             }).collect();
@@ -717,20 +715,9 @@ fn print_rpc_text(
                     .contract_address
                     .map(|a| format!("0x{}", hex::encode(a)))
                     .unwrap_or_default();
-                let val_preview = ch
-                    .raw_value
-                    .as_deref()
-                    .map(|v| {
-                        if v.len() > 16 {
-                            format!("{}…", &v[..16])
-                        } else {
-                            v.to_string()
-                        }
-                    })
-                    .unwrap_or_else(|| "DELETED".into());
                 println!(
                     "    {} {} → {} = {}",
-                    ch.contract, addr_str, ch.field, val_preview
+                    ch.contract, addr_str, ch.field, ch.decoded
                 );
             }
         }
@@ -789,6 +776,7 @@ fn print_rpc_json(
                         "contract": format!("{}", ch.contract),
                         "address": ch.contract_address.map(|a| format!("0x{}", hex::encode(a))),
                         "field": format!("{}", ch.field),
+                        "decoded": format!("{}", ch.decoded),
                         "raw_value": ch.raw_value,
                     })
                 })

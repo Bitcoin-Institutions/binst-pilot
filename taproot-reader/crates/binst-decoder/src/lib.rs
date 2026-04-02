@@ -30,6 +30,7 @@ pub mod diff;
 pub mod entities;
 pub mod jmt;
 pub mod storage;
+pub mod value;
 
 pub use entities::*;
 pub use storage::*;
