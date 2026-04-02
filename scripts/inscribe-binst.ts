@@ -104,12 +104,23 @@ function generateOrdCommand(
 
   // Build ord command
   // Note: ord infers content-type from file extension (.json → application/json)
+  const btcRpcUser = process.env.BTC_RPC_USER ?? "testnet4rpc";
+  const btcRpcPass = process.env.BTC_RPC_PASS;
+  const btcRpcUrl  = process.env.BTC_RPC_URL  ?? "http://127.0.0.1:48332";
+
+  if (!btcRpcPass) {
+    throw new Error(
+      "BTC_RPC_PASS environment variable is required. " +
+      "Set it in your .env file or export it in your shell."
+    );
+  }
+
   const parts = [
     "ord",
     "--testnet4",
-    "--bitcoin-rpc-username=testnet4rpc",
-    "--bitcoin-rpc-password=AgsJ324J_qqNWgy0Zb7TxemDGLKFdSje",
-    "--bitcoin-rpc-url=http://127.0.0.1:48332",
+    `--bitcoin-rpc-username=${btcRpcUser}`,
+    `--bitcoin-rpc-password=${btcRpcPass}`,
+    `--bitcoin-rpc-url=${btcRpcUrl}`,
     "wallet",
     "--no-sync",
     "--server-url", "http://localhost:8080",
