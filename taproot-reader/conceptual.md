@@ -255,9 +255,19 @@ taproot-reader/
                          includes value.rs: human-readable decoding
                          (addresses, uints, bools, strings, StepState structs)
                          with Citrea LE→BE word reversal
+                         includes vault.rs: BIP 379 miniscript policy →
+                         Taproot descriptor compilation (WASM-exportable)
     cli/               ← citrea-scanner binary (connects to Bitcoin Core RPC
                          or Citrea RPC; supports --discover)
 ```
 
+### Wallet-compatible vault protection
+
+Inscription UTXOs are protected by miniscript spending policies compiled
+to Taproot descriptors. The descriptor `tr(NUMS, {and(pk(admin),older(144)), thresh(2,pk(A),pk(B),pk(C))})`
+is importable into standard Bitcoin wallets (Sparrow, Liana, Nunchuk) —
+no custom BINST software is needed to sign vault spends.
+
+See `MINISCRIPT.md` for the vault architecture.
 See `BITCOIN-IDENTITY.md` for the full architecture specification.
 See `DECODING.md` for Citrea DA transaction format details.

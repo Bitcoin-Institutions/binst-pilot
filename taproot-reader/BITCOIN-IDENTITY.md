@@ -154,7 +154,28 @@ guard is not optional — it is essential infrastructure.
 
 Rather than relying solely on wallet discipline, BINST institution
 inscriptions should be locked in a **Taproot script tree that prevents
-accidental spending at the consensus level**:
+accidental spending at the consensus level**.
+
+The vault is defined as a [BIP 379](https://github.com/bitcoin/bips/blob/master/bip-0379.md) **miniscript policy**:
+
+```
+or(
+  and(pk(admin), older(144)),       ← admin transfer, ~24h CSV delay
+  thresh(2, pk(A), pk(B), pk(C))    ← 2-of-3 committee, immediate
+)
+```
+
+This compiles to a Taproot descriptor via `rust-miniscript` (`binst-decoder/src/vault.rs`):
+
+```
+tr(NUMS, { and(pk(admin),older(144)), thresh(2,pk(A),pk(B),pk(C)) })
+```
+
+The descriptor is **directly importable** into standard Bitcoin wallets
+(Sparrow, Liana, Nunchuk) — no custom BINST software needed to sign
+vault spends. See `MINISCRIPT.md` for the full architecture.
+
+The compiled script tree produces:
 
 ```
 Taproot output:
@@ -166,7 +187,10 @@ Taproot output:
       <144> OP_CHECKSEQUENCEVERIFY OP_DROP     ← ~24h delay (144 blocks)
 
     Leaf 1 (committee override — immediate):
-      <2> <key_A> <key_B> <key_C> <3> OP_CHECKMULTISIG
+      <key_A> OP_CHECKSIGVERIFY
+      <key_B> OP_CHECKSIGADD
+      <key_C> OP_CHECKSIGADD
+      <2> OP_NUMEQUAL
 ```
 
 **How it works:**
@@ -188,8 +212,11 @@ Taproot output:
 - **Committee backstop** — Leaf 1 is the "break glass" path. If the
   admin key is lost or compromised, the 2-of-3 multi-sig can recover
   the inscription immediately.
+- **Wallet-native** — the miniscript descriptor imports directly into
+  BIP 379 wallets. Users sign vault spends with Sparrow, Liana, or
+  Nunchuk — no custom BINST tooling required.
 - **Standard Bitcoin** — this uses only Taproot features available today
-  (BIP 341/342, OP_CHECKSIG, OP_CHECKSEQUENCEVERIFY, OP_CHECKMULTISIG).
+  (BIP 341/342, OP_CHECKSIG, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIGADD).
   No OP_CTV or OP_CAT needed.
 - **Ordinals-compatible** — the `ord` indexer tracks inscriptions by
   ordinal theory regardless of the spending script. A Taproot script

@@ -37,6 +37,7 @@ pub mod entities;
 pub mod jmt;
 pub mod storage;
 pub mod value;
+pub mod vault;
 
 pub use entities::*;
 pub use storage::*;

@@ -91,7 +91,7 @@ A Rust workspace that decodes BINST data directly from Bitcoin:
 | Crate | Description |
 |-------|-------------|
 | `citrea-decoder` | Parses Citrea DA inscriptions (sequencer commitments, batch proofs) from raw tapscript witness |
-| `binst-decoder` | Maps L2 storage slot diffs → BINST entities. Includes human-readable value decoding (addresses, uints, bools, strings, packed structs) with Citrea LE→BE word reversal |
+| `binst-decoder` | Maps L2 storage slot diffs → BINST entities. Includes human-readable value decoding and **miniscript vault module** (BIP 379 policy → Taproot descriptor, WASM-exportable) |
 | `binst-inscription` | Parses Ordinals envelopes for `binst` metaprotocol inscriptions; typed entity bodies |
 | `cli` (`citrea-scanner`) | Binary that scans Bitcoin Core or queries Citrea RPC for DA transactions. Supports `--discover` to auto-find BINST contracts |
 
@@ -122,11 +122,22 @@ See [schema/README.md](taproot-reader/schema/README.md) for examples.
 | Script | Description |
 |--------|-------------|
 | `inscribe-binst.ts` | Generate `ord` commands to inscribe BINST entities on Bitcoin testnet4 |
-| `taproot-vault.ts` | Build Taproot leaf scripts for inscription UTXO safety (NUMS + CSV + multisig) |
+| `taproot-vault.ts` | ~~Build Taproot leaf scripts~~ **Deprecated** — replaced by `binst-decoder::vault` (Rust miniscript). Kept as reference |
+| `psbt-transfer.ts` | ~~PSBT assembly for vault transfers~~ **Deprecated** — replaced by wallet-native descriptor signing |
 | `demo-flow.ts` | End-to-end demo: deploy institution → create process → execute steps |
 | `bitcoin-awareness.ts` | Read Bitcoin Light Client, query finality RPCs |
 | `finality-monitor.ts` | Poll Citrea RPCs until a watched L2 block is committed / ZK-proven |
 | `test-protocol.ts` | Protocol test against live Citrea testnet |
+
+### Wallet Compatibility
+
+The miniscript vault descriptor (`tr(NUMS, {…})`) is directly importable into:
+
+- **[Sparrow Wallet](https://sparrowwallet.com/)** — File → New Wallet → descriptor import
+- **[Liana](https://wizardsardine.com/liana/)** — built on miniscript, native descriptor support
+- **[Nunchuk](https://nunchuk.io/)** — collaborative multisig with descriptor import
+
+See [`MINISCRIPT.md`](./MINISCRIPT.md) for the full architecture.
 
 ---
 
@@ -139,7 +150,7 @@ npm install
 # Compile Solidity (Shanghai EVM)
 npx hardhat compile
 
-# Run tests (14 Solidity + 68 Rust = 82 total)
+# Run tests (14 Solidity + 79 Rust = 93 total)
 npx hardhat test
 cd taproot-reader && cargo test
 
@@ -153,8 +164,8 @@ npx hardhat run scripts/demo-flow.ts --network citreaTestnet
 # Generate inscription command for testnet4
 npx ts-node scripts/inscribe-binst.ts institution "Acme Financial" <admin_x_only_pubkey>
 
-# Generate Taproot vault scripts
-npx ts-node scripts/taproot-vault.ts <admin_pubkey> <committee_key_A> <committee_key_B> <committee_key_C>
+# Generate vault descriptor (Rust — replaces taproot-vault.ts)
+cd taproot-reader && cargo test -p binst-decoder vault
 
 # Bitcoin awareness (reads Citrea Light Client, no deployment needed)
 npx tsx scripts/bitcoin-awareness.ts
@@ -264,7 +275,7 @@ before interpreting.
 
 - **Hardhat 3** with Viem (not ethers)
 - **Solidity 0.8.24** targeting Shanghai EVM
-- **Rust 1.94** — taproot-reader workspace (4 crates, 68 tests)
+- **Rust 1.94** — taproot-reader workspace (4 crates, 79 tests)
 - **TypeScript** (ESM)
 - **Citrea Testnet** (chain 5115, Bitcoin Testnet4 DA layer)
 - **Bitcoin Core** testnet4 for full-node verification (optional — Citrea RPC mode available)

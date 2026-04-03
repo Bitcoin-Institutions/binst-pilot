@@ -1,4 +1,16 @@
 /**
+ * @deprecated This hand-rolled Taproot construction is superseded by the
+ * Rust miniscript vault module (`binst-decoder/src/vault.rs`).
+ *
+ * The new implementation uses BIP 379 miniscript policy descriptors compiled
+ * via `rust-miniscript`, producing wallet-compatible output. This file is
+ * kept as a reference for the original key/address values used during
+ * development. See MINISCRIPT.md for architecture details.
+ *
+ * TODO: Remove once the webapp vault flow is fully operational (Phase 4).
+ */
+
+/**
  * Taproot Vault — BINST inscription UTXO safety.
  *
  * Builds a complete Taproot output (BIP 341/342) that locks inscription

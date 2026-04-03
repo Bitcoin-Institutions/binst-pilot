@@ -1,4 +1,16 @@
 /**
+ * @deprecated This hand-rolled PSBT construction is superseded by the
+ * miniscript-based vault flow in `binst-decoder/src/vault.rs`.
+ *
+ * The new implementation uses wallet-compatible Taproot descriptors so
+ * that standard Bitcoin wallets can sign spending transactions directly,
+ * eliminating the need for manual PSBT assembly. This file is kept as a
+ * reference. See MINISCRIPT.md for architecture details.
+ *
+ * TODO: Remove once the webapp vault flow is fully operational (Phase 4).
+ */
+
+/**
  * psbt-transfer.ts — Atomic Institution Transfer via PSBT
  *
  * Generates the `bitcoin-cli` commands to construct a PSBT (BIP 174/371)

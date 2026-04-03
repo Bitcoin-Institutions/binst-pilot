@@ -54,18 +54,18 @@ contracts and pointing them at the same inscription.
 
 | Crate | Purpose | Status |
 |-------|---------|--------|
-| `citrea-decoder` | Parses Citrea DA inscriptions from raw tapscript witness | ✅ 2 tests |
-| `binst-decoder` | Maps L2 storage slot diffs → BINST entities (`BitcoinIdentity`, `InstitutionState`, etc.) | ✅ 5 tests |
+| `citrea-decoder` | Parses Citrea DA inscriptions from raw tapscript witness | ✅ 7 tests |
+| `binst-decoder` | Maps L2 storage slot diffs → BINST entities; miniscript vault module (BIP 379 policy → Taproot descriptor) | ✅ 52 tests |
 | `binst-inscription` | Parses Ordinals envelopes for `binst` metaprotocol inscriptions | ✅ 10 tests |
-| `cli` (`citrea-scanner`) | Connects to Bitcoin Core RPC, scans for Citrea DA transactions | ✅ tested live |
+| `cli` (`citrea-scanner`) | Connects to Bitcoin Core RPC, scans for Citrea DA transactions | ✅ 5 tests |
 
-17 tests passing (`cargo test`).
+79 tests passing (`cargo test`).
 
 ### WASM Webapp
 
 | Component | Purpose | Status |
 |-----------|---------|--------|
-| `binst-pilot-webapp` | Rust/WASM inscription decoder (JSON body + witness hex) | ✅ 148 KB release build |
+| `binst-pilot-webapp` | Rust/WASM inscription decoder + vault generator (JSON body + witness hex) | ✅ 179 KB release build |
 
 Built with Trunk, reuses `binst-inscription` crate via path dependency.
 Two decode modes: JSON body parse and raw witness hex envelope extraction.
@@ -88,7 +88,8 @@ Two decode modes: JSON body parse and raw witness hex envelope extraction.
 |--------|---------|
 | `demo-flow.ts` | End-to-end: deploy → institution → members → process → execute all steps |
 | `inscribe-binst.ts` | Generate `ord` commands to inscribe BINST entities on Bitcoin testnet4 |
-| `taproot-vault.ts` | Build Taproot leaf scripts for inscription UTXO safety (NUMS + CSV + multisig) |
+| `taproot-vault.ts` | ~~Taproot leaf scripts~~ **Deprecated** — replaced by `binst-decoder::vault` (Rust miniscript) |
+| `psbt-transfer.ts` | ~~PSBT vault transfers~~ **Deprecated** — replaced by wallet-native descriptor signing |
 | `bitcoin-awareness.ts` | Read Bitcoin Light Client, query finality RPCs |
 | `finality-monitor.ts` | Poll Citrea RPCs until a watched L2 block is committed / ZK-proven |
 | `test-protocol.ts` | Query live deployed contracts on Citrea testnet |
@@ -141,11 +142,14 @@ discoverable.
 | **1b** | Authority model flip: Bitcoin key = sovereign, L2 = delegate, `bitcoin_pubkey` required in Rust structs, L2 portability docs | ✅ |
 | **2** | Bitcoin-key sovereignty in Solidity: `btcPubkey` field, BTC→EVM derivation for trustless binding, live inscription on testnet4, WASM webapp | ✅ |
 | **2b** | DA proof: ProcessInstance state reachable via Bitcoin DA, `state_digest` schema, storage layout update for `btcPubkey` | ✅ |
+| **2c** | **Miniscript vault**: BIP 379 policy compilation in Rust (`vault.rs`), WASM export, wallet-compatible Taproot descriptors, 11 vault tests, hand-rolled scripts deprecated | ✅ |
 | **3** | Membership Runes + cross-chain sync: etch Rune, mint/distribute, LayerZero V2 relay (`BINSTRelay.sol` OApp), read-only mirrors on other L2s, batch BTC-side operations | ⬜ |
 | **4** | Bitcoin-native discovery + unified wallet: `binst` indexer, member queries via Rune balances, Schnorr-verified single-wallet UX, cross-chain process verification via Bitcoin DA | ⬜ |
 | **5** | Deep Bitcoin integration: covenant vaults (OP_CTV/OP_CAT), MuSig2 admin, Rune-gated access, BitVM verification | ⬜ |
 
 See `BITCOIN-IDENTITY.md` § "Implementation phases" for full details.
+See `MINISCRIPT.md` for the miniscript vault architecture.
+See `miniscript_revamp.md` for the detailed implementation plan.
 
 ---
 
