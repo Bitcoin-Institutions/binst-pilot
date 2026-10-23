@@ -1,3 +1,0 @@
-[workspace]
-resolver = "2"
-members = ["crates/citrea-decoder", "crates/binst-decoder", "crates/binst-inscription", "crates/cli"]

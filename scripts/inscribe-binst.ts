@@ -38,6 +38,9 @@ interface ProcessTemplateBody {
   v: 0;
   type: "process_template";
   name: string;
+  /** Ordinals inscription ID of the parent institution (`<txid>i0`).
+   *  Must match the Ordinals parent tag (tag 3) in the envelope. */
+  institution_id: string;
   steps: Array<{ name: string; action_type?: string }>;
   citrea_contract?: string;
   description?: string;
@@ -46,6 +49,9 @@ interface ProcessTemplateBody {
 interface ProcessInstanceBody {
   v: 0;
   type: "process_instance";
+  /** Ordinals inscription ID of the parent process template (`<txid>i0`).
+   *  Must match the Ordinals parent tag (tag 3) in the envelope. */
+  template_id: string;
   creator: string;
   citrea_contract?: string;
 }
@@ -65,26 +71,31 @@ function buildInstitution(name: string, adminPubkey: string, citreaContract?: st
 
 function buildProcessTemplate(
   name: string,
+  institutionId: string,
   steps: Array<{ name: string; action_type?: string }>,
   citreaContract?: string,
 ): ProcessTemplateBody {
   if (steps.length === 0) throw new Error("Template must have at least one step");
+  if (!institutionId) throw new Error("institutionId is required — must be the parent institution inscription ID");
   return {
     v: 0,
     type: "process_template",
     name,
+    institution_id: institutionId,
     steps,
     ...(citreaContract ? { citrea_contract: citreaContract } : {}),
   };
 }
 
-function buildProcessInstance(creatorPubkey: string, citreaContract?: string): ProcessInstanceBody {
+function buildProcessInstance(templateId: string, creatorPubkey: string, citreaContract?: string): ProcessInstanceBody {
   if (creatorPubkey.length !== 64) {
     throw new Error("Creator pubkey must be 64 hex chars (32 bytes x-only)");
   }
+  if (!templateId) throw new Error("templateId is required — must be the parent process template inscription ID");
   return {
     v: 0,
     type: "process_instance",
+    template_id: templateId,
     creator: creatorPubkey,
     ...(citreaContract ? { citrea_contract: citreaContract } : {}),
   };
@@ -212,7 +223,7 @@ function main() {
         process.exit(1);
       }
       const steps = JSON.parse(stepsJson);
-      const body = buildProcessTemplate(name, steps, citreaContract);
+      const body = buildProcessTemplate(name, parentId, steps, citreaContract);
       const { bodyFile, command } = generateOrdCommand(body, parentId, destination);
 
       console.log("═══ BINST Process Template Inscription ═══\n");
@@ -234,7 +245,7 @@ function main() {
         console.error("Usage: inscribe-binst.ts instance <creator_pubkey> <parent_inscription_id> [citrea_contract]");
         process.exit(1);
       }
-      const body = buildProcessInstance(creatorPubkey, citreaContract);
+      const body = buildProcessInstance(parentId, creatorPubkey, citreaContract);
       const { bodyFile, command } = generateOrdCommand(body, parentId, destination);
 
       console.log("═══ BINST Process Instance Inscription ═══\n");
