@@ -45,12 +45,12 @@ L2 — currently Citrea (PROCESSING DELEGATE)
 ┌─────────────────────────────────────────────────────────────┐
 │           L2 PROCESSING DELEGATE (currently Citrea)          │
 │                                                             │
-│  BINSTDeployer → Institution → ProcessTemplate → Instance   │
+│  BINSTProcessFactory → BINSTProcess (one per instance)      │
 │                                                             │
 │  Contract is BOUND TO inscription ID.                       │
 │  User can redeploy to any L2 — identity stays on Bitcoin.   │
 │                                                             │
-│  Cross-chain: LayerZero V2 mirrors identity to other L2s.   │
+│  Cross-chain (planned): LayerZero V2 mirrors to other L2s.  │
 │  Execution state verified trustlessly via Bitcoin DA proofs. │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -73,6 +73,39 @@ catastrophic (committee multi-sig recovery required).
 
 ## Contracts (Solidity 0.8.24, Shanghai EVM)
 
+### Current: "Thin L2, Fat L1" (`contracts/process/`)
+
+| Contract | Description |
+|----------|-------------|
+| `BINSTProcessFactory` | Thin factory: `createInstance(templateInscriptionId, stepNames, stepActionTypes)` deploys a `BINSTProcess` and emits `InstanceCreated`. Indexes instances by user and by template inscription ID (convenience, not authoritative) |
+| `BINSTProcess` | Self-contained process instance: stores the L1 `templateInscriptionId`, a copy of the step definitions, and per-step execution state |
+
+`BINSTProcessFactory` is deployed on Citrea Testnet (chain 5115) at
+`0x6a1d2adbac8682773ed6700d2118c709c8ce5000`. Institutions and process templates
+live on Bitcoin L1 as inscriptions; only execution state lives on the L2.
+
+#### Pilot limitations (not production-ready)
+
+These contracts are a testnet pilot and have not been audited. Known gaps:
+
+- **No access control on execution.** `executeStep` and `executeStepWithPayment`
+  can be called by any address, for any instance. No Bitcoin key authorizes steps yet.
+- **Payments are locked.** `executeStepWithPayment` accepts cBTC, but there is no
+  withdrawal function, and it does not check that the current step's `actionType`
+  is `payment`.
+- **Templates are not validated.** `createInstance` accepts any
+  `templateInscriptionId` with any step list. Compare an instance's steps against
+  the L1 inscription body before trusting it; `getTemplateInstances` can contain
+  instances that do not match their template.
+- **Rejection does not stop a process.** A `Rejected` step can be executed again.
+- **Migration is not implemented.** The LayerZero migration fields and the
+  `ProcessMigrated` event are declared but never set or emitted.
+- `getAllInstances` is unbounded.
+
+Fixing the first two requires a redeploy of the factory.
+
+### Legacy (`contracts/`)
+
 | Contract | Description |
 |----------|-------------|
 | `BINSTDeployer` | Factory/registry — creates institutions and deploys process templates |
@@ -80,20 +113,24 @@ catastrophic (committee multi-sig recovery required).
 | `ProcessTemplate` | Immutable workflow blueprint with named steps |
 | `ProcessInstance` | Running execution with step-by-step state tracking |
 
-All contracts are deployed and verified on Citrea Testnet (chain 5115).
+The legacy set mirrors the L1 hierarchy on the L2. It is deployed and verified on
+Citrea Testnet and kept for its tests and for `binst scan --discover`.
 
 ---
 
-## Taproot Reader (Rust workspace)
+## Rust protocol crates (moved to `BINST-protocol`)
 
-A Rust workspace that decodes BINST data directly from Bitcoin:
+The Rust workspace that used to live in `taproot-reader/` is now
+[`BINST-protocol`](https://github.com/Bitcoin-Institutions/BINST-protocol):
 
 | Crate | Description |
 |-------|-------------|
 | `citrea-decoder` | Parses Citrea DA inscriptions (sequencer commitments, batch proofs) from raw tapscript witness |
 | `binst-decoder` | Maps L2 storage slot diffs → BINST entities. Includes human-readable value decoding and **miniscript vault module** (BIP 379 policy → Taproot descriptor, WASM-exportable) |
 | `binst-inscription` | Parses Ordinals envelopes for `binst` metaprotocol inscriptions; typed entity bodies |
-| `cli` (`citrea-scanner`) | Binary that scans Bitcoin Core or queries Citrea RPC for DA transactions. Supports `--discover` to auto-find BINST contracts |
+| `binst-evm` | ABI encoding, JSON-RPC client and finality tiers for the BINST contracts |
+| `binst-btc` | Native commit/reveal PSBT pipeline and mempool.space client |
+| `cli` (`binst`) | Sovereign toolkit: `finality`, `instance`, `vault`, `factory`, `scan`. `binst scan` replaces `citrea-scanner` and supports `--discover` |
 
 ### Bitcoin identity (`BitcoinIdentity` struct)
 
@@ -111,9 +148,9 @@ pub struct BitcoinIdentity {
 
 ### JSON schema
 
-The `binst` metaprotocol uses a [JSON Schema](taproot-reader/schema/binst-metaprotocol.json)
+The `binst` metaprotocol uses a [JSON Schema](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/schema/binst-metaprotocol.json)
 defining four entity types: `institution`, `process_template`, `process_instance`, `step_execution`.
-See [schema/README.md](taproot-reader/schema/README.md) for examples.
+See [schema/README.md](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/schema/README.md) for examples.
 
 ---
 
@@ -128,6 +165,9 @@ See [schema/README.md](taproot-reader/schema/README.md) for examples.
 | `bitcoin-awareness.ts` | Read Bitcoin Light Client, query finality RPCs |
 | `finality-monitor.ts` | Poll Citrea RPCs until a watched L2 block is committed / ZK-proven |
 | `test-protocol.ts` | Protocol test against live Citrea testnet |
+| `deploy-factory-citrea.ts` | Deploy `BINSTProcessFactory` to Citrea Testnet (aborts unless chain 5115) |
+| `deploy-process-factory.ts` | Deploy `BINSTProcessFactory` + a sample instance to a local Hardhat node (chain 31337) |
+| `deploy-local.ts` | Deploy the legacy `BINSTDeployer` + a sample template to a local Hardhat node (chain 31337) |
 
 ### Wallet Compatibility
 
@@ -150,9 +190,9 @@ npm install
 # Compile Solidity (Shanghai EVM)
 npx hardhat compile
 
-# Run tests (14 Solidity + 79 Rust = 93 total)
+# Run tests (24 Solidity: 14 legacy + 10 BINSTProcess)
 npx hardhat test
-cd taproot-reader && cargo test
+# Rust crates: see BINST-protocol (`cargo test --workspace`)
 
 # Run demo (local Hardhat)
 npx hardhat run scripts/demo-flow.ts
@@ -164,8 +204,8 @@ npx hardhat run scripts/demo-flow.ts --network citreaTestnet
 # Generate inscription command for testnet4
 npx ts-node scripts/inscribe-binst.ts institution "Acme Financial" <admin_x_only_pubkey>
 
-# Generate vault descriptor (Rust — replaces taproot-vault.ts)
-cd taproot-reader && cargo test -p binst-decoder vault
+# Generate vault descriptor (Rust — replaces taproot-vault.ts), in BINST-protocol
+cargo test -p binst-decoder vault
 
 # Bitcoin awareness (reads Citrea Light Client, no deployment needed)
 npx tsx scripts/bitcoin-awareness.ts
@@ -204,24 +244,24 @@ BINST relies on Citrea's rollup infrastructure to anchor all L2 activity to Bitc
 | **Committed** | Sequencer commitment inscribed on Bitcoin | `citrea_getLastCommittedL2Height` |
 | **ZK-Proven** | ZK batch proof inscribed on Bitcoin | `citrea_getLastProvenL2Height` |
 
-The `taproot-reader` Rust workspace can decode these inscriptions directly
-from a Bitcoin full node — see [DECODING.md](taproot-reader/DECODING.md).
+The [`BINST-protocol`](https://github.com/Bitcoin-Institutions/BINST-protocol) crates can decode these inscriptions directly
+from a Bitcoin full node — see [DECODING.md](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/DECODING.md).
 
 ### Citrea RPC mode (no Bitcoin node required)
 
-The `citrea-scanner` CLI can also query batch proofs directly from a Citrea
-full node, without needing a local Bitcoin Core:
+`binst scan` (the `binst` CLI in BINST-protocol, formerly `citrea-scanner`) can also
+query batch proofs directly from a Citrea full node, without needing a local Bitcoin Core:
 
 ```bash
 # Scan a BTC block via Citrea RPC with auto-discovery of BINST contracts
-cargo run --bin citrea-scanner -- \
+binst scan \
   --citrea-rpc https://rpc.testnet.citrea.xyz \
   --discover \
   --deployer 0xd0abca83bd52949fcf741d6da0289c5ec7235aaf \
   --block 127848
 
 # Manual addresses (skip discovery)
-cargo run --bin citrea-scanner -- \
+binst scan \
   --citrea-rpc https://rpc.testnet.citrea.xyz \
   --deployer 0x... --template 0x... --instance 0x... \
   --block 127848
@@ -264,10 +304,15 @@ before interpreting.
 
 | Document | Description |
 |----------|-------------|
-| [BITCOIN-IDENTITY.md](taproot-reader/BITCOIN-IDENTITY.md) | Full architecture: authority model, Taproot vault, lock/unlock flows, L2 portability |
-| [conceptual.md](taproot-reader/conceptual.md) | Non-technical overview of the three-layer architecture |
-| [DECODING.md](taproot-reader/DECODING.md) | Technical reference for Citrea DA transaction decoding |
-| [schema/README.md](taproot-reader/schema/README.md) | BINST metaprotocol JSON schema and examples |
+| [BITCOIN-IDENTITY.md](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/BITCOIN-IDENTITY.md) | Full architecture: authority model, Taproot vault, lock/unlock flows, L2 portability |
+| [conceptual.md](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/conceptual.md) | Non-technical overview of the three-layer architecture |
+| [DECODING.md](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/DECODING.md) | Technical reference for Citrea DA transaction decoding |
+| [schema/README.md](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/schema/README.md) | BINST metaprotocol JSON schema and examples |
+| [MINISCRIPT.md](./MINISCRIPT.md) | Miniscript vault architecture |
+| [DA-PROOF.md](./DA-PROOF.md) | Citrea DA proof walkthrough |
+
+The canonical copies of the first four live in BINST-protocol. The copies in
+`taproot-reader/` are historical and are not kept up to date.
 
 ---
 
@@ -275,7 +320,7 @@ before interpreting.
 
 - **Hardhat 3** with Viem (not ethers)
 - **Solidity 0.8.24** targeting Shanghai EVM
-- **Rust 1.94** — taproot-reader workspace (4 crates, 79 tests)
+- **Rust** — protocol crates in [BINST-protocol](https://github.com/Bitcoin-Institutions/BINST-protocol) (6 crates)
 - **TypeScript** (ESM)
 - **Citrea Testnet** (chain 5115, Bitcoin Testnet4 DA layer)
 - **Bitcoin Core** testnet4 for full-node verification (optional — Citrea RPC mode available)

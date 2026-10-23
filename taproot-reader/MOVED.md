@@ -11,6 +11,7 @@ This includes:
 - `citrea-scanner` CLI
 
 The documentation files (`BITCOIN-IDENTITY.md`, `DECODING.md`, `conceptual.md`) and
-JSON schema (`schema/`) also moved to `binst-protocol`.
+JSON schema (`schema/`) also moved to `binst-protocol`, where they are maintained.
 
-This directory retains the original conceptual docs for reference.
+The three docs in this directory are historical copies kept for reference. They are
+not updated and may cite paths that no longer exist here.

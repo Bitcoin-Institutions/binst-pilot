@@ -1,5 +1,9 @@
 # Decoding Citrea Data-on-DA (DECODING.md)
 
+> **Historical copy.** This document moved to
+> [BINST-protocol](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/DECODING.md),
+> which is the maintained version. Paths below may refer to the removed `taproot-reader/` workspace.
+
 This document explains the technical details of decoding Citrea Data Availability
 inscriptions written into Bitcoin taproot script-path transactions. It covers the
 five transaction types, the wire format, and the practical steps for finding and

@@ -1,5 +1,9 @@
 # BINST Bitcoin-Native Identity Architecture
 
+> **Historical copy.** This document moved to
+> [BINST-protocol](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/BITCOIN-IDENTITY.md),
+> which is the maintained version. Paths below may refer to the removed `taproot-reader/` workspace.
+
 How BINST entities are represented, discovered, and verified on Bitcoin.
 
 ---

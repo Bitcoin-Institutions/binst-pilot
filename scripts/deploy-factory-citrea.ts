@@ -14,6 +14,11 @@ async function main() {
   const publicClient = await connection.viem.getPublicClient();
   const [deployer] = await connection.viem.getWalletClients();
 
+  const chainId = await publicClient.getChainId();
+  if (chainId !== 5115) {
+    throw new Error(`Expected Citrea Testnet (chain 5115), connected to chain ${chainId}. Aborting.`);
+  }
+
   console.log("Network:  Citrea Testnet (chain 5115)");
   console.log("Deployer:", deployer.account.address);
 

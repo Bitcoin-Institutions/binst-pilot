@@ -1,5 +1,9 @@
 # How BINST Represents Institutions on Bitcoin
 
+> **Historical copy.** This document moved to
+> [BINST-protocol](https://github.com/Bitcoin-Institutions/BINST-protocol/blob/main/conceptual.md),
+> which is the maintained version.
+
 A non-technical explanation of how the BINST protocol makes institutions,
 membership, and processes **fully visible and verifiable on Bitcoin** —
 without requiring custom software for basic discovery.

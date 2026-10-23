@@ -14,6 +14,11 @@ async function main() {
   const publicClient = await connection.viem.getPublicClient();
   const [deployer] = await connection.viem.getWalletClients();
 
+  const chainId = await publicClient.getChainId();
+  if (chainId !== 31337) {
+    throw new Error(`This script is for a local Hardhat node (chain 31337), connected to chain ${chainId}. Aborting.`);
+  }
+
   console.log("Deployer:", deployer.account.address);
   console.log("");
 
